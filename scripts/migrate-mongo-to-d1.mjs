@@ -117,9 +117,12 @@ function inferHistoryAction(item) {
   if (item.action === "CREATE" || item.action === "UPDATE" || item.action === "SYSTEM") {
     return item.action;
   }
+  if (item.action === "AUTO_DEDUCT" || item.action === "AUTO_RESTORE") {
+    return "SYSTEM";
+  }
   const content = String(item.content || "");
-  if (content.startsWith("Tạo mới")) return "CREATE";
-  if (content.startsWith("Hệ thống") || item.actorName === "Hệ thống") return "SYSTEM";
+  if (content.startsWith("Tạo mới") || content.startsWith("Tạo bản ghi")) return "CREATE";
+  if (content.startsWith("Hệ thống") || content.startsWith("Tự trừ") || item.actorName === "Hệ thống") return "SYSTEM";
   return "UPDATE";
 }
 
