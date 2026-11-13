@@ -4,6 +4,7 @@ const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
 export function getHanoiParts(now: Date = new Date()): {
   date: string;
   time: string;
+  shortTime: string;
 } {
   const vnTime = new Date(now.getTime() + VN_OFFSET_MS);
   const year = vnTime.getUTCFullYear();
@@ -16,6 +17,7 @@ export function getHanoiParts(now: Date = new Date()): {
   return {
     date: `${year}-${month}-${day}`,
     time: `${hours}:${minutes}:${seconds}`,
+    shortTime: `${hours}:${minutes}`,
   };
 }
 

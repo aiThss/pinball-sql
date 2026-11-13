@@ -27,6 +27,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { formatDate, getHanoiNow, getHanoiParts } from "@/lib/time";
+import StatusSelect from "./StatusSelect";
 
 type Mode = "staff" | "admin";
 type Status = "Đang gửi" | "Đã nhận lại" | "Đã đổi quà" | "Đã hủy";
@@ -244,8 +245,6 @@ function getDefaultDepositForm(includeDateTime = false) {
 
 const inputClass =
   "h-12 w-full rounded-md border border-[#CBD5E1] bg-white px-3 text-[15px] text-[#0F172A] outline-none transition placeholder:text-[#94A3B8] focus:border-[#111827] focus:ring-2 focus:ring-[#111827]/10";
-const selectClass =
-  "h-12 w-full rounded-md border border-[#CBD5E1] bg-white px-3 text-[15px] text-[#0F172A] outline-none transition focus:border-[#111827] focus:ring-2 focus:ring-[#111827]/10";
 const labelClass = "mb-2 block text-sm font-semibold text-[#0F172A]";
 const primaryButton =
   "inline-flex h-12 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-[#111827] px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1F2937] disabled:opacity-50";
@@ -1500,15 +1499,15 @@ export default function Dashboard({ mode }: { mode: Mode }) {
       });
       const depositRows = exportDeposits.map((deposit, index) => [
         index + 1,
-        deposit.fullName,
-        deposit.phone,
+        deposit.fullName || "",
+        deposit.phone || "",
         formatDate(deposit.depositDate),
-        deposit.depositTime,
-        deposit.cards,
-        deposit.balls,
-        deposit.totalText,
-        deposit.cardAction,
-        deposit.ballAction,
+        deposit.depositTime || "",
+        deposit.cards ?? 0,
+        deposit.balls ?? 0,
+        deposit.totalText || "",
+        deposit.cardAction || "",
+        deposit.ballAction || "",
         creatorName(deposit),
       ]);
       const depositSheet: SheetData = [
@@ -1607,7 +1606,7 @@ export default function Dashboard({ mode }: { mode: Mode }) {
         fontFamily: "Arial",
         fontSize: 11,
       }).toFile(
-        `pinball-gui-giu-${exportedAt.date}-${exportedAt.shortTime.replace(":", "-")}.xlsx`,
+        `pinball-gui-giu-${exportedAt.date}-${(exportedAt.shortTime || exportedAt.time.slice(0, 5)).replace(":", "-")}.xlsx`,
       );
       showNotice("success", "Đã xuất file Excel.");
     } catch (error) {
@@ -2530,24 +2529,18 @@ export default function Dashboard({ mode }: { mode: Mode }) {
 
               {/* Compact status row */}
               <div className="flex">
-                <select
-                  aria-label="Trạng thái"
-                  className="h-11 w-full rounded-md border border-[#CBD5E1] bg-white px-3 text-sm text-[#0F172A] outline-none transition focus:border-[#111827] focus:ring-2 focus:ring-[#111827]/10"
+                <StatusSelect
+                  allOptionLabel="Tất cả trạng thái"
+                  ariaLabel="Trạng thái"
+                  options={statuses}
                   value={filters.status}
-                  onChange={(event) => {
-                    const next = { ...filters, status: event.target.value };
+                  onChange={(nextStatus) => {
+                    const next = { ...filters, status: nextStatus };
                     setFilters(next);
                     setAppliedFilters(next);
                     void loadDeposits(next, 1);
                   }}
-                >
-                  <option value="">Tất cả trạng thái</option>
-                  {statuses.map((status) => (
-                    <option key={status} value={status}>
-                      {status}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </form>
           </section>
@@ -3180,25 +3173,21 @@ export default function Dashboard({ mode }: { mode: Mode }) {
                   }
                 />
               </label>
-              <label className="sm:col-span-2">
+              <div className="sm:col-span-2">
                 <span className={labelClass}>Trạng thái</span>
-                <select
-                  className={selectClass}
+                <StatusSelect
+                  ariaLabel="Trạng thái"
+                  options={statuses}
+                  size="lg"
                   value={editForm.status}
-                  onChange={(event) =>
+                  onChange={(nextStatus) =>
                     setEditForm((current) => ({
                       ...current,
-                      status: event.target.value as Status,
+                      status: nextStatus as Status,
                     }))
                   }
-                >
-                  {statuses.map((status) => (
-                    <option key={status} value={status}>
-                      {status}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                />
+              </div>
 
               <div className="grid grid-cols-2 gap-2 sm:col-span-2 sm:flex sm:justify-end">
                 <button

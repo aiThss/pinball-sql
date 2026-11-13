@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { Save, Trash2, X } from "lucide-react";
+import StatusSelect from "./StatusSelect";
 
 type Status = "Đang gửi" | "Đã nhận lại" | "Đã đổi quà" | "Đã hủy";
 type RecordAction = "edit" | "delete";
@@ -30,8 +31,6 @@ type EditForm = {
 const statuses: Status[] = ["Đang gửi", "Đã nhận lại", "Đã đổi quà", "Đã hủy"];
 const inputClass =
   "h-12 w-full rounded-md border border-[#CBD5E1] bg-white px-3 text-[15px] text-[#0F172A] outline-none transition placeholder:text-[#94A3B8] focus:border-[#111827] focus:ring-2 focus:ring-[#111827]/10";
-const selectClass =
-  "h-12 w-full rounded-md border border-[#CBD5E1] bg-white px-3 text-[15px] text-[#0F172A] outline-none transition focus:border-[#111827] focus:ring-2 focus:ring-[#111827]/10";
 const labelClass = "mb-2 block text-sm font-semibold text-[#0F172A]";
 const primaryButton =
   "inline-flex h-12 items-center justify-center gap-2 rounded-md bg-[#111827] px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1F2937] disabled:cursor-not-allowed disabled:opacity-50";
@@ -279,20 +278,18 @@ export default function AdminRecordAction({ adminDisplayName }: { adminDisplayNa
                 required
               />
             </label>
-            <label className="sm:col-span-2">
+            <div className="sm:col-span-2">
               <span className={labelClass}>Trạng thái</span>
-              <select
-                className={selectClass}
+              <StatusSelect
+                ariaLabel="Trạng thái"
+                options={statuses}
+                size="lg"
                 value={editForm.status}
-                onChange={(event) => setEditForm((current) => current ? { ...current, status: event.target.value as Status } : current)}
-              >
-                {statuses.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-            </label>
+                onChange={(nextStatus) =>
+                  setEditForm((current) => (current ? { ...current, status: nextStatus as Status } : current))
+                }
+              />
+            </div>
             <div className="grid grid-cols-2 gap-2 sm:col-span-2 sm:flex sm:justify-end">
               <button className={`${secondaryButton} w-full sm:w-auto`} disabled={submitting} onClick={closeModal} type="button">
                 Huỷ

@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Save, Ticket, XCircle } from "lucide-react";
+import StatusSelect from "./StatusSelect";
 
 type Status = "Đang gửi" | "Đã nhận lại" | "Đã đổi quà" | "Đã hủy";
 
@@ -364,21 +365,18 @@ export default function TelegramRecordEditor({ recordId }: { recordId: string })
               />
             </label>
 
-            <label className="sm:col-span-2">
+            <div className="sm:col-span-2">
               <span className={labelClass}>Trạng thái</span>
-              <select
-                className={fieldClass}
-                style={fieldStyle}
+              <StatusSelect
+                ariaLabel="Trạng thái"
+                options={statuses}
+                size="lg"
                 value={form.status}
-                onChange={(event) => setForm((current) => current ? { ...current, status: event.target.value as Status } : current)}
-              >
-                {statuses.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-            </label>
+                onChange={(nextStatus) =>
+                  setForm((current) => (current ? { ...current, status: nextStatus as Status } : current))
+                }
+              />
+            </div>
 
             <div className="grid grid-cols-2 gap-3 pt-1 sm:col-span-2">
               <button

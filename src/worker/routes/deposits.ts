@@ -22,7 +22,7 @@ import {
 
 export const depositsRoutes = new Hono<{ Bindings: WorkerEnv }>();
 
-function getWaitUntil(c: { executionCtx?: ExecutionContext }): ((p: Promise<unknown>) => void) | undefined {
+function getWaitUntil(c: { executionCtx?: { waitUntil: (promise: Promise<unknown>) => void } }): ((p: Promise<unknown>) => void) | undefined {
   try {
     const ctx = c.executionCtx;
     return ctx ? ctx.waitUntil.bind(ctx) : undefined;
