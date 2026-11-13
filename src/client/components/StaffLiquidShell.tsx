@@ -239,10 +239,10 @@ export default function StaffLiquidShell({
           <span>© 2026 • Made by</span>
           <span className={paginationStyles.copyrightSignature}>aiThs</span>
         </div>
-        <div className={paginationStyles.gateContactLabel}>Contact for work</div>
+        <div className={paginationStyles.gateContactLabel}>Mọi vấn đề cần hỗ trợ vui lòng liên hệ qua</div>
         <ChevronDown className={paginationStyles.gateArrow} aria-hidden="true" />
-        <a className={paginationStyles.gateEmail} href="mailto:danhthai4560@gmail.com">
-          danhthai4560@gmail.com
+        <a className={paginationStyles.gateEmail} href="mailto:support@aiths.cloud">
+          support@aiths.cloud
         </a>
       </footer>
     </div>
