@@ -175,6 +175,8 @@
   -webkit-text-fill-color: transparent;
   -webkit-tap-highlight-color: transparent;
   transition:
+    color 180ms ease,
+    -webkit-text-fill-color 180ms ease,
     text-shadow 180ms ease,
     transform 180ms ease;
 }
@@ -191,17 +193,22 @@
   -webkit-text-fill-color: #111216;
 }
 
+.paginationShell[data-staff-theme="light"] .gateEmail:hover {
+  --staff-email-color: #000000;
+  -webkit-text-fill-color: #000000;
+}
+
 .paginationShell[data-staff-theme="dark"] .gateEmail {
+  --staff-email-color: #e2e8f0;
+  --staff-email-text-shadow: none;
+  --staff-email-hover-shadow: none;
+  background: none;
+  -webkit-text-fill-color: #e2e8f0;
+}
+
+.paginationShell[data-staff-theme="dark"] .gateEmail:hover {
   --staff-email-color: #ffffff;
-  --staff-email-text-fill: linear-gradient(180deg, #ffffff 0%, #f7f8fb 50%, #c8ccd5 100%);
-  --staff-email-text-shadow:
-    0 0 2px rgba(255, 255, 255, 0.9),
-    0 0 9px rgba(255, 255, 255, 0.48),
-    0 0 20px rgba(214, 223, 255, 0.24);
-  --staff-email-hover-shadow:
-    0 0 3px rgba(255, 255, 255, 0.95),
-    0 0 12px rgba(255, 255, 255, 0.62),
-    0 0 24px rgba(214, 223, 255, 0.34);
+  -webkit-text-fill-color: #ffffff;
 }
 
 .gateEmail:hover {
