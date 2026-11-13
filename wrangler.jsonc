@@ -12,7 +12,7 @@
     {
       "binding": "DB",
       "database_name": "pinball-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "98e69029-8040-45f4-9935-8f7cc0244cb6",
       "migrations_dir": "migrations"
     }
   ]
