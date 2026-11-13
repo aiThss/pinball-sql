@@ -185,7 +185,7 @@ const cardActions: CardAction[] = ["Gửi thẻ", "Lấy thẻ"];
 const ballActions: BallAction[] = ["Gửi bi", "Lấy bi"];
 const staffStorageKey = "pinball_staff_name";
 const appTitle = "Ký gửi PINBALL";
-const adminDisplayName = "Danh Thai";
+const defaultAdminDisplayName = "Danh Thai";
 const emptyFilters: DepositFilters = {
   name: "",
   phone: "",
@@ -300,20 +300,20 @@ function creatorName(deposit: Deposit) {
   return deposit.createdByName || deposit.createdBy?.displayName || "N/A";
 }
 
-function getRecordUpdateEntries(deposit: Deposit): HistoryEntry[] {
+function getRecordUpdateEntries(deposit: Deposit, adminName: string): HistoryEntry[] {
   if (Array.isArray(deposit.updates) && deposit.updates.length > 0) {
-    return deposit.updates.filter((u) => u.actorName !== adminDisplayName);
+    return deposit.updates.filter((u) => u.actorName !== adminName);
   }
 
   const historyUpdates = deposit.history.filter(
-    (entry) => entry.action === "UPDATE" && entry.actorName !== adminDisplayName,
+    (entry) => entry.action === "UPDATE" && entry.actorName !== adminName,
   );
 
   if (historyUpdates.length > 0) {
     return historyUpdates;
   }
 
-  if (deposit.latestUpdate?.action === "UPDATE" && deposit.latestUpdate.actorName !== adminDisplayName) {
+  if (deposit.latestUpdate?.action === "UPDATE" && deposit.latestUpdate.actorName !== adminName) {
     return [deposit.latestUpdate];
   }
 
@@ -321,15 +321,17 @@ function getRecordUpdateEntries(deposit: Deposit): HistoryEntry[] {
 }
 
 function CompactUpdateInfo({
+  adminDisplayName = defaultAdminDisplayName,
   changeClassName,
   deposit,
   lineClassName,
 }: {
+  adminDisplayName?: string;
   changeClassName?: string;
   deposit: Deposit;
   lineClassName: string;
 }) {
-  const updates = getRecordUpdateEntries(deposit);
+  const updates = getRecordUpdateEntries(deposit, adminDisplayName);
 
   if (updates.length === 0) {
     return null;
@@ -553,9 +555,16 @@ function StaffGate({ initialName = "", onEnter }: { initialName?: string; onEnte
   );
 }
 
-export default function Dashboard({ mode }: { mode: Mode }) {
+export default function Dashboard({
+  adminDisplayName: adminDisplayNameProp,
+  mode,
+}: {
+  adminDisplayName?: string;
+  mode: Mode;
+}) {
   const router = useAppRouter();
   const isAdmin = mode === "admin";
+  const adminDisplayName = adminDisplayNameProp?.trim() || defaultAdminDisplayName;
   const [staffName, setStaffName] = useState(isAdmin ? adminDisplayName : "");
   const [staffSessionLoaded, setStaffSessionLoaded] = useState(isAdmin);
   const [clock, setClock] = useState<ReturnType<typeof getHanoiParts> | null>(null);
@@ -1338,6 +1347,7 @@ export default function Dashboard({ mode }: { mode: Mode }) {
       void loadDeposits(appliedFilters, 1, false, true, currentCount);
       if (isAdmin) {
         void loadAdminDashboard(adminDashboardDate);
+        void loadAdminSystem();
       }
       showNotice(
         "success",
@@ -1410,6 +1420,7 @@ export default function Dashboard({ mode }: { mode: Mode }) {
       void loadDeposits(appliedFilters, 1, false, true, currentCount);
       if (isAdmin) {
         void loadAdminDashboard(adminDashboardDate);
+        void loadAdminSystem();
       }
       showNotice("success", "Đã cập nhật bản ghi.");
     } catch (error) {
@@ -1438,6 +1449,7 @@ export default function Dashboard({ mode }: { mode: Mode }) {
       void loadDeposits(appliedFilters, 1, false, true, currentCount);
       if (isAdmin) {
         void loadAdminDashboard(adminDashboardDate);
+        void loadAdminSystem();
       }
       showNotice("success", "Đã xóa bản ghi.");
     } catch (error) {
@@ -1717,7 +1729,7 @@ export default function Dashboard({ mode }: { mode: Mode }) {
                   <div>
                     <h2 className="text-base font-bold">Hiệu năng & toàn bộ dữ liệu</h2>
                     <p className="mt-1 text-xs text-[#64748B]">
-                      Đo một lượt đọc tổng hợp từ MongoDB; không tạo tải đồng thời lên website production.
+                      Đo một lượt đọc tổng hợp từ Cloudflare D1; không tạo tải đồng thời lên website production.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1752,7 +1764,7 @@ export default function Dashboard({ mode }: { mode: Mode }) {
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#64748B]">
-                  <span>Phản hồi MongoDB: {formatDuration(adminSystemOverview.databaseMs)}</span>
+                  <span>Phản hồi Cloudflare D1: {formatDuration(adminSystemOverview.databaseMs)}</span>
                   <span>Bản ghi tổng hợp ngày: {adminSystemOverview.dailySummaryRecords}</span>
                   {adminSystemOverview.checkedAt ? (
                     <span>Đo lúc: {formatDateTime(adminSystemOverview.checkedAt)}</span>
@@ -2659,6 +2671,7 @@ export default function Dashboard({ mode }: { mode: Mode }) {
                       Tạo bởi: {creatorName(deposit)} lúc {formatShortDateTime(deposit.createdAt)}
                     </div>
                     <CompactUpdateInfo
+                      adminDisplayName={adminDisplayName}
                       changeClassName="line-clamp-1 text-xs text-[#475569]"
                       deposit={deposit}
                       lineClassName="text-xs text-[#64748B]"
@@ -2804,6 +2817,7 @@ export default function Dashboard({ mode }: { mode: Mode }) {
                             Tạo bởi: {creatorName(deposit)} lúc {formatShortDateTime(deposit.createdAt)}
                           </div>
                           <CompactUpdateInfo
+                            adminDisplayName={adminDisplayName}
                             changeClassName="line-clamp-2 text-xs text-[#475569]"
                             deposit={deposit}
                             lineClassName="text-xs text-[#64748B]"
@@ -2853,7 +2867,7 @@ export default function Dashboard({ mode }: { mode: Mode }) {
                       </tr>
                       {isAdmin && expandedHistoryId === deposit.id ? (
                         <tr className="bg-[#F8FAFC]">
-                          <td className="px-5 py-4" colSpan={10}>
+                          <td className="px-5 py-4" colSpan={isAdmin ? 12 : 10}>
                             <div className="space-y-2">
                               {historyLoadingId === deposit.id ? (
                                 <div className="text-sm text-[#64748B]">Đang tải lịch sử...</div>

@@ -397,6 +397,10 @@ depositsRoutes.patch("/:id", async (c) => {
 });
 
 depositsRoutes.delete("/:id", async (c) => {
+  if (!(await isAdminRequest(c))) {
+    return c.json({ message: "Unauthorized admin request." }, 403);
+  }
+
   const id = c.req.param("id");
 
   try {

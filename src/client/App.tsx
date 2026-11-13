@@ -62,7 +62,7 @@ function AdminPage() {
 
   return (
     <StaffLiquidShell mode="admin">
-      <Dashboard mode="admin" />
+      <Dashboard adminDisplayName={auth.adminDisplayName} mode="admin" />
       <AdminRecordAction adminDisplayName={auth.adminDisplayName} />
       <CardRankingModalGuard />
     </StaffLiquidShell>
@@ -72,7 +72,8 @@ function AdminPage() {
 function TelegramRecordPage() {
   const [recordId] = useState(() => {
     if (typeof window === "undefined") return "";
-    return new URLSearchParams(window.location.search).get("id")?.trim() ?? "";
+    const params = new URLSearchParams(window.location.search);
+    return (params.get("record") || params.get("id") || "").trim();
   });
 
   return <TelegramRecordEditor recordId={recordId} />;

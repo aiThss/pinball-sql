@@ -23,16 +23,17 @@ botRoutes.get("/daily-report", async (c) => {
 
   const rowsResult = await c.env.DB.prepare(
     `SELECT
-      full_name AS fullName,
+      MAX(full_name) AS fullName,
       phone,
-      records,
-      cards_deposited AS cardsDeposited,
-      balls_deposited AS ballsDeposited,
-      cards_withdrawn AS cardsWithdrawn,
-      balls_withdrawn AS ballsWithdrawn
-    FROM customers_daily_deposits
-    WHERE date = ?
-    ORDER BY cards_deposited DESC, balls_deposited DESC, records DESC`
+      COUNT(*) AS records,
+      COALESCE(SUM(CASE WHEN card_action = 'Gửi thẻ' THEN cards ELSE 0 END), 0) AS cardsDeposited,
+      COALESCE(SUM(CASE WHEN ball_action = 'Gửi bi' THEN balls ELSE 0 END), 0) AS ballsDeposited
+    FROM customers_deposits
+    WHERE deposit_date = ?
+      AND status != 'Đã hủy'
+      AND ((card_action = 'Gửi thẻ' AND cards > 0) OR (ball_action = 'Gửi bi' AND balls > 0))
+    GROUP BY phone
+    ORDER BY cardsDeposited DESC, ballsDeposited DESC, records DESC`
   )
     .bind(date)
     .all<{
@@ -41,8 +42,6 @@ botRoutes.get("/daily-report", async (c) => {
       records: number;
       cardsDeposited: number;
       ballsDeposited: number;
-      cardsWithdrawn: number;
-      ballsWithdrawn: number;
     }>();
 
   let totalRecords = 0;

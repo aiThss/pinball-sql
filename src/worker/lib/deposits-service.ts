@@ -653,6 +653,7 @@ export async function createDeposit(
       actorName: input.actorName,
       depositTime,
       depositDate,
+      totalText: serialized.totalText,
     },
   };
 }
