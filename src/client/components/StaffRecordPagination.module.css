@@ -135,7 +135,7 @@
 
 .copyrightSignature {
   color: var(--staff-text);
-  font-family: var(--font-allura), cursive;
+  font-family: var(--font-allura, "Allura"), "Allura", cursive;
   font-size: 24px;
   font-weight: 400;
   letter-spacing: 1px;
@@ -163,7 +163,7 @@
   background: var(--staff-email-text-fill);
   background-clip: text;
   color: var(--staff-email-color);
-  font-family: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-jetbrains-mono, "JetBrains Mono"), "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: clamp(15px, 2.8vw, 18px);
   font-weight: 600;
   letter-spacing: -0.025em;

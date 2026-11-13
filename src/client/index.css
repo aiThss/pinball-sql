@@ -8,6 +8,11 @@
   font-display: swap;
 }
 
+:root {
+  --font-allura: "Allura";
+  --font-jetbrains-mono: "JetBrains Mono";
+}
+
 @layer base {
   html,
   body {
