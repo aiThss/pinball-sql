@@ -1,0 +1,128 @@
+.roundedShell {
+  --staff-radius-card-xl: 30px;
+  --staff-radius-card: 24px;
+  --staff-radius-panel: 20px;
+  --staff-radius-control: 16px;
+  --staff-radius-small: 13px;
+}
+
+/* Lift Tailwind's existing radius scale to match pinball-user. */
+.roundedShell :global([class*="rounded-2xl"]) {
+  border-radius: var(--staff-radius-card-xl) !important;
+}
+
+.roundedShell :global([class*="rounded-xl"]) {
+  border-radius: 28px !important;
+}
+
+.roundedShell :global([class*="rounded-lg"]) {
+  border-radius: var(--staff-radius-card) !important;
+}
+
+.roundedShell :global([class*="rounded-md"]) {
+  border-radius: var(--staff-radius-control) !important;
+}
+
+.roundedShell :global([class~="rounded"]) {
+  border-radius: var(--staff-radius-small) !important;
+}
+
+/* Pills, avatars and circular controls must stay fully round. */
+.roundedShell :global([class*="rounded-full"]) {
+  border-radius: 999px !important;
+}
+
+/* Main dashboard glass sections. */
+.roundedShell :global(main section[class*="rounded-lg"][class*="border"]) {
+  border-radius: var(--staff-radius-card-xl) !important;
+}
+
+.roundedShell :global(main section[class*="overflow-hidden"][class*="border"]) {
+  border-radius: var(--staff-radius-card-xl) !important;
+}
+
+/* Keep both mobile rows of summary cards exactly the same height. */
+.roundedShell :global(main section[class*="grid-cols-2"][class*="md:grid-cols-4"]) {
+  grid-auto-rows: 1fr;
+}
+
+/* Summary cards and ranking card. */
+.roundedShell :global(main section[class*="grid-cols-2"] > div[class*="bg-white"]),
+.roundedShell :global(main section[class*="grid-cols-2"] > button[class*="border"]) {
+  border-radius: var(--staff-radius-card) !important;
+}
+
+/* Neutral nested panels, action selectors and customer previews. */
+.roundedShell :global(div[class*="bg-[#F8FAFC]"][class*="border"]),
+.roundedShell :global(div[class*="bg-[#F1F5F9]"][class*="border"]),
+.roundedShell :global(article[class*="bg-white"][class*="border"]) {
+  border-radius: var(--staff-radius-panel) !important;
+}
+
+/* Form fields use the same compact radius as pinball-user inputs. */
+.roundedShell :global(input),
+.roundedShell :global(select),
+.roundedShell :global(textarea) {
+  border-radius: var(--staff-radius-control) !important;
+}
+
+/* Neutral rectangular actions become softer without changing status colors. */
+.roundedShell :global(button[class*="border"]:not([class*="rounded-full"])),
+.roundedShell :global(a[class*="border"]:not([class*="rounded-full"])) {
+  border-radius: var(--staff-radius-control) !important;
+}
+
+/* Action selector buttons inside the send/withdraw panels. */
+.roundedShell :global(div[class*="grid-cols-2"] > button[class~="rounded"]) {
+  border-radius: 14px !important;
+}
+
+/* Mobile records: glossy cards in light mode, clean M3 surface cards in dark mode */
+.roundedShell :global(section[class*="overflow-hidden"] > div[class*="divide-y"] > article) {
+  margin: 10px;
+  border: 1px solid var(--staff-border);
+  border-radius: var(--staff-radius-card) !important;
+  background: linear-gradient(145deg, var(--staff-glass-from), var(--staff-glass-to));
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 8px 22px rgba(15, 23, 42, 0.07);
+}
+
+.roundedShell[data-staff-theme="dark"] :global(section[class*="overflow-hidden"] > div[class*="divide-y"] > article) {
+  background: #1c1f26;
+  border-color: #333744;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+
+/* Keep the dividers from cutting through rounded mobile cards. */
+.roundedShell :global(section[class*="overflow-hidden"] > div[class*="divide-y"] > article + article) {
+  border-top-width: 1px !important;
+}
+
+/* Sidebar selected/navigation blocks. */
+.roundedShell :global(aside nav > div[class*="rounded-md"]) {
+  border-radius: 16px !important;
+}
+
+/* Dialog cards and fixed overlays, where present. */
+.roundedShell :global([role="dialog"] > div[class*="bg-white"]),
+.roundedShell :global([role="dialog"][class*="bg-white"]) {
+  border-radius: var(--staff-radius-card-xl) !important;
+}
+
+@media (max-width: 640px) {
+  .roundedShell {
+    --staff-radius-card-xl: 26px;
+    --staff-radius-card: 22px;
+    --staff-radius-panel: 18px;
+    --staff-radius-control: 15px;
+  }
+
+  .roundedShell :global(section[class*="overflow-hidden"] > div[class*="divide-y"] > article) {
+    margin: 8px;
+  }
+}

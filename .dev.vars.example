@@ -1,0 +1,7 @@
+# Local development secrets for Wrangler / Cloudflare Vite plugin
+# Copy to .dev.vars and fill in real values (never commit .dev.vars)
+ADMIN_PASSWORD=change-me-strong-password
+ADMIN_DISPLAY_NAME=Danh Thai
+TELEGRAM_BOT_WEBHOOK_URL=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_ADMIN_USER_IDS=

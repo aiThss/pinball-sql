@@ -1,0 +1,139 @@
+.quickActionsShell {
+  --staff-action-blue: #087cff;
+  --staff-action-green: #168a4a;
+  --staff-action-orange: #e45f3f;
+}
+
+.quickActionsMount {
+  width: 100%;
+}
+
+.quickActionsCard {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  width: 100%;
+  padding: 5px;
+  border: 1px solid var(--staff-border);
+  border-radius: 999px;
+  background: linear-gradient(145deg, var(--staff-glass-strong-from), var(--staff-glass-strong-to));
+  backdrop-filter: blur(24px) saturate(155%);
+  -webkit-backdrop-filter: blur(24px) saturate(155%);
+  box-shadow:
+    var(--staff-shadow-soft),
+    inset 0 1px 0 var(--staff-highlight),
+    inset 0 -1px 0 var(--staff-border-soft);
+}
+
+.quickAction {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 50px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--staff-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color 180ms ease,
+    background 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.quickAction svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.downloadAction {
+  color: var(--staff-action-blue);
+  border-color: color-mix(in srgb, var(--staff-action-blue) 22%, transparent);
+  background: color-mix(in srgb, var(--staff-action-blue) 9%, transparent);
+}
+
+.themeAction {
+  color: var(--staff-action-green);
+  border-color: color-mix(in srgb, var(--staff-action-green) 22%, transparent);
+  background: color-mix(in srgb, var(--staff-action-green) 9%, transparent);
+}
+
+.renameAction {
+  color: var(--staff-action-orange);
+  border-color: color-mix(in srgb, var(--staff-action-orange) 28%, transparent);
+  background: color-mix(in srgb, var(--staff-action-orange) 11%, transparent);
+}
+
+.quickAction:hover,
+.quickAction:focus-visible {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 58%, transparent),
+    0 6px 18px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.quickAction:focus-visible {
+  outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
+  outline-offset: 2px;
+}
+
+.quickAction:active {
+  transform: scale(0.97);
+}
+
+.quickActionsShell :global(main > header a[href="/install"]),
+.quickActionsShell :global(main > header button[title="Đổi nhân viên"]) {
+  display: none !important;
+}
+
+.quickActionsShell[data-shell-mode="admin"] :global(main > header > div > div:last-child) {
+  display: none !important;
+}
+
+@media (max-width: 520px) {
+  .quickActionsCard {
+    gap: 3px;
+    padding: 4px;
+  }
+
+  .quickAction {
+    min-height: 46px;
+    gap: 5px;
+    padding-inline: 5px;
+    font-size: 11px;
+    letter-spacing: -0.01em;
+  }
+
+  .quickAction svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+@media (max-width: 350px) {
+  .quickAction {
+    gap: 3px;
+    padding-inline: 3px;
+    font-size: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quickAction {
+    transition: none;
+  }
+}
