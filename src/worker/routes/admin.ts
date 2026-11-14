@@ -27,7 +27,7 @@ adminRoutes.get("/dashboard", async (c) => {
   nextDayDate.setUTCDate(nextDayDate.getUTCDate() + 1);
   const dayEndUtc = nextDayDate.toISOString();
 
-  const [summaryRow, updatedCountRow, recentUpdatesResult, dailyTotalsResult] = await Promise.all([
+  const [summaryRes, updatedCountRes, recentUpdatesRes, dailyTotalsRes] = await c.env.DB.batch([
     c.env.DB.prepare(
       `SELECT
         COUNT(*) AS totalRecords,
@@ -38,23 +38,12 @@ adminRoutes.get("/dashboard", async (c) => {
         COALESCE(SUM(CASE WHEN ball_action = 'Lấy bi' THEN balls ELSE 0 END), 0) AS ballsWithdrawn
       FROM customers_deposits
       WHERE deposit_date = ? AND status != 'Đã hủy'`
-    )
-      .bind(date)
-      .first<{
-        totalRecords: number;
-        uniqueCustomers: number;
-        cardsDeposited: number;
-        ballsDeposited: number;
-        cardsWithdrawn: number;
-        ballsWithdrawn: number;
-      }>(),
+    ).bind(date),
     c.env.DB.prepare(
       `SELECT COUNT(*) AS cnt
       FROM deposit_history
       WHERE action = 'UPDATE' AND at >= ? AND at < ?`
-    )
-      .bind(dayStartUtc, dayEndUtc)
-      .first<{ cnt: number }>(),
+    ).bind(dayStartUtc, dayEndUtc),
     c.env.DB.prepare(
       `SELECT
         h.id,
@@ -69,17 +58,7 @@ adminRoutes.get("/dashboard", async (c) => {
       WHERE h.action = 'UPDATE' AND h.actor_name != ?
       ORDER BY h.at DESC
       LIMIT 100`
-    )
-      .bind(adminDisplayName)
-      .all<{
-        id: string;
-        depositId: string;
-        fullName: string;
-        phone: string;
-        updatedByName: string;
-        updatedAt: string;
-        content: string;
-      }>(),
+    ).bind(adminDisplayName),
     c.env.DB.prepare(
       `SELECT
         CAST(id AS TEXT) AS id,
@@ -94,10 +73,20 @@ adminRoutes.get("/dashboard", async (c) => {
       WHERE date = ?
       ORDER BY cards_deposited DESC, balls_deposited DESC, records DESC
       LIMIT 100`
-    )
-      .bind(date)
-      .all(),
+    ).bind(date),
   ]);
+
+  const summaryRow = summaryRes.results[0] as
+    | {
+        totalRecords: number;
+        uniqueCustomers: number;
+        cardsDeposited: number;
+        ballsDeposited: number;
+        cardsWithdrawn: number;
+        ballsWithdrawn: number;
+      }
+    | undefined;
+  const updatedCountRow = updatedCountRes.results[0] as { cnt: number } | undefined;
 
   return c.json({
     date,
@@ -110,8 +99,8 @@ adminRoutes.get("/dashboard", async (c) => {
       ballsWithdrawn: summaryRow?.ballsWithdrawn ?? 0,
       recordsUpdated: updatedCountRow?.cnt ?? 0,
     },
-    recentUpdates: recentUpdatesResult.results,
-    customerDailyTotals: dailyTotalsResult.results,
+    recentUpdates: recentUpdatesRes.results,
+    customerDailyTotals: dailyTotalsRes.results,
   });
 });
 
@@ -130,10 +119,7 @@ adminRoutes.get("/deposits/:id", async (c) => {
 
 adminRoutes.get("/system", async (c) => {
   const pingStart = Date.now();
-  await c.env.DB.prepare("SELECT 1").first();
-  const databaseMs = Math.max(1, Date.now() - pingStart);
-
-  const [depositsAgg, historyAgg, dailyAgg] = await Promise.all([
+  const [depositsRes, historyRes, dailyRes] = await c.env.DB.batch([
     c.env.DB.prepare(
       `SELECT
         COUNT(*) AS totalRecords,
@@ -144,18 +130,25 @@ adminRoutes.get("/system", async (c) => {
         MIN(created_at) AS firstRecordAt,
         MAX(created_at) AS lastRecordAt
       FROM customers_deposits`
-    ).first<{
-      totalRecords: number;
-      cardsDeposited: number;
-      ballsDeposited: number;
-      cardsWithdrawn: number;
-      ballsWithdrawn: number;
-      firstRecordAt: string | null;
-      lastRecordAt: string | null;
-    }>(),
-    c.env.DB.prepare(`SELECT COUNT(*) AS cnt FROM deposit_history`).first<{ cnt: number }>(),
-    c.env.DB.prepare(`SELECT COUNT(*) AS cnt FROM customers_daily_deposits`).first<{ cnt: number }>(),
+    ),
+    c.env.DB.prepare(`SELECT COUNT(*) AS cnt FROM deposit_history`),
+    c.env.DB.prepare(`SELECT COUNT(*) AS cnt FROM customers_daily_deposits`),
   ]);
+  const databaseMs = Math.max(1, Date.now() - pingStart);
+
+  const depositsAgg = depositsRes.results[0] as
+    | {
+        totalRecords: number;
+        cardsDeposited: number;
+        ballsDeposited: number;
+        cardsWithdrawn: number;
+        ballsWithdrawn: number;
+        firstRecordAt: string | null;
+        lastRecordAt: string | null;
+      }
+    | undefined;
+  const historyAgg = historyRes.results[0] as { cnt: number } | undefined;
+  const dailyAgg = dailyRes.results[0] as { cnt: number } | undefined;
 
   return c.json({
     checkedAt: new Date().toISOString(),

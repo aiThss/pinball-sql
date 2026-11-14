@@ -3,6 +3,9 @@
   "name": "pinball-sql",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-04-01",
+  "placement": {
+    "mode": "smart"
+  },
   "assets": {
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",

@@ -34,7 +34,7 @@ export interface DepositRow {
   system_created_ms: number;
 }
 
-interface HistoryRow {
+export interface HistoryRow {
   id: string;
   deposit_id: string;
   seq: number;
@@ -59,7 +59,7 @@ export function isValidRecordId(id: string): boolean {
 }
 
 export function formatTotalText(cards: number, balls: number): string {
-  return `${Math.max(0, cards)} thẻ · ${Math.max(0, balls)} bi`;
+  return `Thẻ: ${Math.max(0, cards)} | Bi: ${Math.max(0, balls)}`;
 }
 
 function parseSnapshot(raw: string | null): DepositHistorySnapshot | undefined {
@@ -94,62 +94,108 @@ function chunkIds(ids: string[], size = 80): string[][] {
   return chunks;
 }
 
+async function execBatchChunked(
+  db: D1Database,
+  statements: D1PreparedStatement[],
+  chunkSize = 100
+): Promise<void> {
+  if (statements.length === 0) return;
+  if (statements.length <= chunkSize) {
+    await db.batch(statements);
+    return;
+  }
+  for (let i = 0; i < statements.length; i += chunkSize) {
+    await db.batch(statements.slice(i, i + chunkSize));
+  }
+}
+
+function compareAscii(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function compareDepositsChronAsc(a: DepositRow, b: DepositRow): number {
+  return (
+    compareAscii(a.deposit_date, b.deposit_date) ||
+    compareAscii(a.deposit_time, b.deposit_time) ||
+    compareAscii(a.created_at, b.created_at) ||
+    a.system_created_ms - b.system_created_ms ||
+    compareAscii(a.id, b.id)
+  );
+}
+
+function mapDepositDto(
+  row: DepositRow,
+  fetchedEntries: DepositHistoryItem[],
+  adminDisplayName: string,
+  includeHistory: boolean
+): DepositDTO {
+  const updates = fetchedEntries.filter(
+    (entry) => entry.action === "UPDATE" && entry.actorName !== adminDisplayName
+  );
+  const latestUpdate = updates.length > 0 ? updates[updates.length - 1] : null;
+
+  return {
+    id: row.id,
+    fullName: row.full_name,
+    phone: row.phone,
+    depositDate: row.deposit_date,
+    depositTime: row.deposit_time,
+    cardAction: row.card_action,
+    ballAction: row.ball_action,
+    cards: row.cards,
+    balls: row.balls,
+    remainingCards: row.remaining_cards,
+    remainingBalls: row.remaining_balls,
+    totalText: row.total_text,
+    status: row.status,
+    createdBy: { displayName: row.created_by_name },
+    updatedBy: { displayName: row.updated_by_name },
+    createdByName: row.created_by_name,
+    updatedByName: row.updated_by_name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    latestUpdate,
+    updates,
+    history: includeHistory ? fetchedEntries : [],
+  };
+}
+
 export async function serializeDeposits(
   db: D1Database,
   rows: DepositRow[],
   adminDisplayName: string,
-  includeHistory: boolean
+  includeHistory: boolean,
+  prefetchedHistory?: HistoryRow[]
 ): Promise<DepositDTO[]> {
   if (rows.length === 0) return [];
 
   const historyByDeposit = new Map<string, DepositHistoryItem[]>();
-  const depositIds = rows.map((r) => r.id);
 
-  for (const chunk of chunkIds(depositIds)) {
-    const placeholders = chunk.map(() => "?").join(", ");
-    const sql = includeHistory
-      ? `SELECT * FROM deposit_history WHERE deposit_id IN (${placeholders}) ORDER BY seq ASC`
-      : `SELECT * FROM deposit_history WHERE deposit_id IN (${placeholders}) AND action = 'UPDATE' ORDER BY seq ASC`;
-    const result = await db.prepare(sql).bind(...chunk).all<HistoryRow>();
-    for (const h of result.results) {
+  if (prefetchedHistory !== undefined) {
+    for (const h of prefetchedHistory) {
       const list = historyByDeposit.get(h.deposit_id) ?? [];
       list.push(mapHistoryRow(h));
       historyByDeposit.set(h.deposit_id, list);
     }
+  } else {
+    const depositIds = rows.map((r) => r.id);
+    for (const chunk of chunkIds(depositIds)) {
+      const placeholders = chunk.map(() => "?").join(", ");
+      const sql = includeHistory
+        ? `SELECT id, deposit_id, seq, at, actor_name, action, content, before_json, after_json FROM deposit_history WHERE deposit_id IN (${placeholders}) ORDER BY deposit_id ASC, seq ASC`
+        : `SELECT id, deposit_id, seq, at, actor_name, action, content, NULL AS before_json, NULL AS after_json FROM deposit_history WHERE deposit_id IN (${placeholders}) AND +action = 'UPDATE' ORDER BY deposit_id ASC, seq ASC`;
+      const result = await db.prepare(sql).bind(...chunk).all<HistoryRow>();
+      for (const h of result.results) {
+        const list = historyByDeposit.get(h.deposit_id) ?? [];
+        list.push(mapHistoryRow(h));
+        historyByDeposit.set(h.deposit_id, list);
+      }
+    }
   }
 
-  return rows.map((row) => {
-    const fetchedEntries = historyByDeposit.get(row.id) ?? [];
-    const updates = fetchedEntries.filter(
-      (entry) => entry.action === "UPDATE" && entry.actorName !== adminDisplayName
-    );
-    const latestUpdate = updates.length > 0 ? updates[updates.length - 1] : null;
-
-    return {
-      id: row.id,
-      fullName: row.full_name,
-      phone: row.phone,
-      depositDate: row.deposit_date,
-      depositTime: row.deposit_time,
-      cardAction: row.card_action,
-      ballAction: row.ball_action,
-      cards: row.cards,
-      balls: row.balls,
-      remainingCards: row.remaining_cards,
-      remainingBalls: row.remaining_balls,
-      totalText: row.total_text,
-      status: row.status,
-      createdBy: { displayName: row.created_by_name },
-      updatedBy: { displayName: row.updated_by_name },
-      createdByName: row.created_by_name,
-      updatedByName: row.updated_by_name,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      latestUpdate,
-      updates,
-      history: includeHistory ? fetchedEntries : [],
-    };
-  });
+  return rows.map((row) =>
+    mapDepositDto(row, historyByDeposit.get(row.id) ?? [], adminDisplayName, includeHistory)
+  );
 }
 
 export async function getDepositRowById(db: D1Database, id: string): Promise<DepositRow | null> {
@@ -159,6 +205,288 @@ export async function getDepositRowById(db: D1Database, id: string): Promise<Dep
     .bind(id)
     .first<DepositRow>();
   return row ?? null;
+}
+
+interface ComputedState {
+  id: string;
+  remC: number;
+  remB: number;
+  status: DepositStatus;
+  totalText: string;
+  allocations: Array<{ sourceId: string; cards: number; balls: number }>;
+}
+
+interface CustomerMutationPlan {
+  sortedRows: DepositRow[];
+  computed: ComputedState[];
+  computedById: Map<string, ComputedState>;
+  activeDeposits: number;
+  totalCards: number;
+  totalBalls: number;
+  updateStatements: D1PreparedStatement[];
+  summaryStatement: D1PreparedStatement;
+  dailyStatements: D1PreparedStatement[];
+}
+
+function buildCustomerMutationPlan(
+  db: D1Database,
+  phone: string,
+  rawRows: DepositRow[],
+  options: {
+    skipUpdateIds?: Set<string>;
+    datesToSync?: Set<string>;
+    nowIso?: string;
+  } = {}
+): CustomerMutationPlan {
+  const sortedRows = [...rawRows].sort(compareDepositsChronAsc);
+  const nowIso = options.nowIso ?? new Date().toISOString();
+
+  interface OpenLot {
+    index: number;
+    id: string;
+    remC: number;
+    remB: number;
+    status: DepositStatus;
+  }
+
+  const openLots: OpenLot[] = [];
+  const computed: ComputedState[] = [];
+  let runningCards = 0;
+  let runningBalls = 0;
+
+  for (let i = 0; i < sortedRows.length; i += 1) {
+    const row = sortedRows[i];
+
+    if (row.status === "Đã hủy" || row.status === "Đã đổi quà") {
+      computed.push({
+        id: row.id,
+        remC: 0,
+        remB: 0,
+        status: row.status,
+        totalText: formatTotalText(runningCards, runningBalls),
+        allocations: [],
+      });
+      continue;
+    }
+
+    const allocMap = new Map<string, { cards: number; balls: number }>();
+
+    if (row.card_action === "Lấy thẻ" && row.cards > 0) {
+      let needCards = row.cards;
+      for (const lot of openLots) {
+        if (needCards <= 0) break;
+        if (lot.remC <= 0) continue;
+        const take = Math.min(lot.remC, needCards);
+        lot.remC -= take;
+        needCards -= take;
+        runningCards = Math.max(0, runningCards - take);
+        computed[lot.index].remC = lot.remC;
+        if (lot.remC === 0 && lot.remB === 0) {
+          lot.status = "Đã nhận lại";
+          computed[lot.index].status = "Đã nhận lại";
+        }
+        const entry = allocMap.get(lot.id) ?? { cards: 0, balls: 0 };
+        entry.cards += take;
+        allocMap.set(lot.id, entry);
+      }
+    }
+
+    if (row.ball_action === "Lấy bi" && row.balls > 0) {
+      let needBalls = row.balls;
+      for (const lot of openLots) {
+        if (needBalls <= 0) break;
+        if (lot.remB <= 0) continue;
+        const take = Math.min(lot.remB, needBalls);
+        lot.remB -= take;
+        needBalls -= take;
+        runningBalls = Math.max(0, runningBalls - take);
+        computed[lot.index].remB = lot.remB;
+        if (lot.remC === 0 && lot.remB === 0) {
+          lot.status = "Đã nhận lại";
+          computed[lot.index].status = "Đã nhận lại";
+        }
+        const entry = allocMap.get(lot.id) ?? { cards: 0, balls: 0 };
+        entry.balls += take;
+        allocMap.set(lot.id, entry);
+      }
+    }
+
+    const ownRemC = row.card_action === "Gửi thẻ" ? row.cards : 0;
+    const ownRemB = row.ball_action === "Gửi bi" ? row.balls : 0;
+    runningCards += ownRemC;
+    runningBalls += ownRemB;
+
+    const ownStatus: DepositStatus = ownRemC > 0 || ownRemB > 0 ? "Đang gửi" : "Đã nhận lại";
+    computed.push({
+      id: row.id,
+      remC: ownRemC,
+      remB: ownRemB,
+      status: ownStatus,
+      totalText: formatTotalText(runningCards, runningBalls),
+      allocations: Array.from(allocMap.entries()).map(([sourceId, qty]) => ({
+        sourceId,
+        cards: qty.cards,
+        balls: qty.balls,
+      })),
+    });
+
+    if (ownStatus === "Đang gửi") {
+      openLots.push({
+        index: i,
+        id: row.id,
+        remC: ownRemC,
+        remB: ownRemB,
+        status: ownStatus,
+      });
+    }
+  }
+
+  const computedById = new Map<string, ComputedState>();
+  const updateStatements: D1PreparedStatement[] = [];
+  let activeDeposits = 0;
+  let totalCards = 0;
+  let totalBalls = 0;
+  let latestNonCancelledIndex = -1;
+
+  for (let i = 0; i < sortedRows.length; i += 1) {
+    const prev = sortedRows[i];
+    const next = computed[i];
+    computedById.set(next.id, next);
+
+    if (next.status !== "Đã hủy") {
+      latestNonCancelledIndex = i;
+    }
+    if (next.status === "Đang gửi") {
+      activeDeposits += 1;
+      totalCards += next.remC;
+      totalBalls += next.remB;
+    }
+
+    if (
+      !options.skipUpdateIds?.has(next.id) &&
+      (prev.remaining_cards !== next.remC ||
+        prev.remaining_balls !== next.remB ||
+        prev.status !== next.status ||
+        prev.total_text !== next.totalText)
+    ) {
+      updateStatements.push(
+        db
+          .prepare(
+            "UPDATE customers_deposits SET remaining_cards = ?, remaining_balls = ?, status = ?, total_text = ? WHERE id = ?"
+          )
+          .bind(next.remC, next.remB, next.status, next.totalText, next.id)
+      );
+    }
+  }
+
+  let summaryStatement: D1PreparedStatement;
+  if (latestNonCancelledIndex === -1) {
+    summaryStatement = db.prepare("DELETE FROM customers_summary WHERE phone = ?").bind(phone);
+  } else {
+    const latestRow = sortedRows[latestNonCancelledIndex];
+    const latestComputed = computed[latestNonCancelledIndex];
+    summaryStatement = db
+      .prepare(
+        `INSERT INTO customers_summary (
+          phone, full_name, search_name, active_deposits, total_cards, total_balls,
+          latest_status, latest_deposit_date, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+          full_name = excluded.full_name,
+          search_name = excluded.search_name,
+          active_deposits = excluded.active_deposits,
+          total_cards = excluded.total_cards,
+          total_balls = excluded.total_balls,
+          latest_status = excluded.latest_status,
+          latest_deposit_date = excluded.latest_deposit_date,
+          updated_at = excluded.updated_at`
+      )
+      .bind(
+        phone,
+        latestRow.full_name || "Khách hàng",
+        latestRow.search_name || normalizeSearchText(latestRow.full_name || ""),
+        activeDeposits,
+        totalCards,
+        totalBalls,
+        latestComputed.status,
+        latestRow.deposit_date,
+        nowIso
+      );
+  }
+
+  const dailyStatements: D1PreparedStatement[] = [];
+  if (options.datesToSync && options.datesToSync.size > 0) {
+    for (const date of options.datesToSync) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+
+      let records = 0;
+      let cardsDeposited = 0;
+      let ballsDeposited = 0;
+      let cardsWithdrawn = 0;
+      let ballsWithdrawn = 0;
+      let latestFullName = "Khách hàng";
+
+      for (let i = 0; i < sortedRows.length; i += 1) {
+        const row = sortedRows[i];
+        const comp = computed[i];
+        if (row.deposit_date !== date || comp.status === "Đã hủy") continue;
+
+        records += 1;
+        latestFullName = row.full_name || latestFullName;
+        if (row.card_action === "Gửi thẻ") cardsDeposited += row.cards;
+        else cardsWithdrawn += row.cards;
+        if (row.ball_action === "Gửi bi") ballsDeposited += row.balls;
+        else ballsWithdrawn += row.balls;
+      }
+
+      if (records === 0) {
+        dailyStatements.push(
+          db
+            .prepare("DELETE FROM customers_daily_deposits WHERE date = ? AND phone = ?")
+            .bind(date, phone)
+        );
+      } else {
+        dailyStatements.push(
+          db
+            .prepare(
+              `INSERT INTO customers_daily_deposits (date, phone, full_name, records, cards_deposited, balls_deposited, cards_withdrawn, balls_withdrawn, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(date, phone) DO UPDATE SET
+                full_name = excluded.full_name,
+                records = excluded.records,
+                cards_deposited = excluded.cards_deposited,
+                balls_deposited = excluded.balls_deposited,
+                cards_withdrawn = excluded.cards_withdrawn,
+                balls_withdrawn = excluded.balls_withdrawn,
+                updated_at = excluded.updated_at`
+            )
+            .bind(
+              date,
+              phone,
+              latestFullName,
+              records,
+              cardsDeposited,
+              ballsDeposited,
+              cardsWithdrawn,
+              ballsWithdrawn,
+              nowIso
+            )
+        );
+      }
+    }
+  }
+
+  return {
+    sortedRows,
+    computed,
+    computedById,
+    activeDeposits,
+    totalCards,
+    totalBalls,
+    updateStatements,
+    summaryStatement,
+    dailyStatements,
+  };
 }
 
 export async function rebuildDailyTotalsForKeys(
@@ -246,9 +574,7 @@ export async function rebuildDailyTotalsForKeys(
     );
   }
 
-  if (statements.length > 0) {
-    await db.batch(statements);
-  }
+  await execBatchChunked(db, statements);
 }
 
 export async function recalculateCustomerDepositTotals(db: D1Database, phone: string): Promise<void> {
@@ -257,213 +583,56 @@ export async function recalculateCustomerDepositTotals(db: D1Database, phone: st
 
   const result = await db
     .prepare(
-      `SELECT id, deposit_date, deposit_time, card_action, ball_action, cards, balls, remaining_cards, remaining_balls, total_text, status
+      `SELECT *
       FROM customers_deposits
       WHERE phone = ?
       ORDER BY deposit_date ASC, deposit_time ASC, created_at ASC, system_created_ms ASC, id ASC`
     )
     .bind(normalizedPhone)
-    .all<{
-      id: string;
-      deposit_date: string;
-      deposit_time: string;
-      card_action: CardActionType;
-      ball_action: BallActionType;
-      cards: number;
-      balls: number;
-      remaining_cards: number;
-      remaining_balls: number;
-      total_text: string;
-      status: DepositStatus;
-    }>();
+    .all<DepositRow>();
 
   const rows = result.results;
-  if (rows.length === 0) return;
-
-  interface OpenLot {
-    index: number;
-    id: string;
-    remC: number;
-    remB: number;
-    status: DepositStatus;
+  if (rows.length === 0) {
+    await db.prepare("DELETE FROM customers_summary WHERE phone = ?").bind(normalizedPhone).run();
+    return;
   }
 
-  interface ComputedState {
-    id: string;
-    remC: number;
-    remB: number;
-    status: DepositStatus;
-    totalText: string;
-    allocations: Array<{ sourceId: string; cards: number; balls: number }>;
-  }
-
-  const openLots: OpenLot[] = [];
-  const computed: ComputedState[] = [];
-  let runningCards = 0;
-  let runningBalls = 0;
-
-  for (let i = 0; i < rows.length; i += 1) {
-    const row = rows[i];
-
-    if (row.status === "Đã hủy" || row.status === "Đã đổi quà") {
-      computed.push({
-        id: row.id,
-        remC: 0,
-        remB: 0,
-        status: row.status,
-        totalText: formatTotalText(runningCards, runningBalls),
-        allocations: [],
-      });
-      continue;
-    }
-
-    const allocMap = new Map<string, { cards: number; balls: number }>();
-
-    if (row.card_action === "Lấy thẻ" && row.cards > 0) {
-      let needCards = row.cards;
-      for (const lot of openLots) {
-        if (needCards <= 0) break;
-        if (lot.remC <= 0) continue;
-        const take = Math.min(lot.remC, needCards);
-        lot.remC -= take;
-        needCards -= take;
-        runningCards = Math.max(0, runningCards - take);
-        computed[lot.index].remC = lot.remC;
-        if (lot.remC === 0 && lot.remB === 0) {
-          lot.status = "Đã nhận lại";
-          computed[lot.index].status = "Đã nhận lại";
-        }
-        const entry = allocMap.get(lot.id) ?? { cards: 0, balls: 0 };
-        entry.cards += take;
-        allocMap.set(lot.id, entry);
-      }
-    }
-
-    if (row.ball_action === "Lấy bi" && row.balls > 0) {
-      let needBalls = row.balls;
-      for (const lot of openLots) {
-        if (needBalls <= 0) break;
-        if (lot.remB <= 0) continue;
-        const take = Math.min(lot.remB, needBalls);
-        lot.remB -= take;
-        needBalls -= take;
-        runningBalls = Math.max(0, runningBalls - take);
-        computed[lot.index].remB = lot.remB;
-        if (lot.remC === 0 && lot.remB === 0) {
-          lot.status = "Đã nhận lại";
-          computed[lot.index].status = "Đã nhận lại";
-        }
-        const entry = allocMap.get(lot.id) ?? { cards: 0, balls: 0 };
-        entry.balls += take;
-        allocMap.set(lot.id, entry);
-      }
-    }
-
-    const ownRemC = row.card_action === "Gửi thẻ" ? row.cards : 0;
-    const ownRemB = row.ball_action === "Gửi bi" ? row.balls : 0;
-    runningCards += ownRemC;
-    runningBalls += ownRemB;
-
-    const ownStatus: DepositStatus = ownRemC > 0 || ownRemB > 0 ? "Đang gửi" : "Đã nhận lại";
-    computed.push({
-      id: row.id,
-      remC: ownRemC,
-      remB: ownRemB,
-      status: ownStatus,
-      totalText: formatTotalText(runningCards, runningBalls),
-      allocations: Array.from(allocMap.entries()).map(([sourceId, qty]) => ({
-        sourceId,
-        cards: qty.cards,
-        balls: qty.balls,
-      })),
-    });
-
-    if (ownStatus === "Đang gửi") {
-      openLots.push({
-        index: i,
-        id: row.id,
-        remC: ownRemC,
-        remB: ownRemB,
-        status: ownStatus,
-      });
-    }
-  }
-
-  const statements: D1PreparedStatement[] = [];
-  for (let i = 0; i < rows.length; i += 1) {
-    const prev = rows[i];
-    const next = computed[i];
-    if (
-      prev.remaining_cards !== next.remC ||
-      prev.remaining_balls !== next.remB ||
-      prev.status !== next.status ||
-      prev.total_text !== next.totalText
-    ) {
-      statements.push(
-        db
-          .prepare(
-            "UPDATE customers_deposits SET remaining_cards = ?, remaining_balls = ?, status = ?, total_text = ? WHERE id = ?"
-          )
-          .bind(next.remC, next.remB, next.status, next.totalText, next.id)
-      );
-    }
-
-    if (prev.card_action === "Lấy thẻ" || prev.ball_action === "Lấy bi") {
-      statements.push(
-        db.prepare("DELETE FROM withdrawal_allocations WHERE withdrawal_id = ?").bind(next.id)
-      );
-      for (const alloc of next.allocations) {
-        statements.push(
-          db
-            .prepare(
-              "INSERT INTO withdrawal_allocations (withdrawal_id, source_id, cards, balls) VALUES (?, ?, ?, ?)"
-            )
-            .bind(next.id, alloc.sourceId, alloc.cards, alloc.balls)
-        );
-      }
-    }
-  }
-
-  if (statements.length > 0) {
-    for (let i = 0; i < statements.length; i += 100) {
-      await db.batch(statements.slice(i, i + 100));
-    }
-  }
+  const plan = buildCustomerMutationPlan(db, normalizedPhone, rows);
+  await execBatchChunked(db, [...plan.updateStatements, plan.summaryStatement]);
 }
 
 export async function recalculateAllCustomers(db: D1Database): Promise<number> {
-  const phonesResult = await db
-    .prepare("SELECT DISTINCT phone FROM customers_deposits")
-    .all<{ phone: string }>();
+  const allRowsResult = await db
+    .prepare(
+      `SELECT *
+      FROM customers_deposits
+      ORDER BY phone ASC, deposit_date ASC, deposit_time ASC, created_at ASC, system_created_ms ASC, id ASC`
+    )
+    .all<DepositRow>();
 
-  for (const { phone } of phonesResult.results) {
-    await recalculateCustomerDepositTotals(db, phone);
+  const rowsByPhone = new Map<string, DepositRow[]>();
+  for (const row of allRowsResult.results) {
+    const normalized = normalizePhone(row.phone);
+    if (!normalized) continue;
+    const list = rowsByPhone.get(normalized) ?? [];
+    list.push(row);
+    rowsByPhone.set(normalized, list);
   }
 
   const nowIso = new Date().toISOString();
-  await db.batch([
+  const statements: D1PreparedStatement[] = [
+    db.prepare("DELETE FROM customers_summary"),
     db.prepare("DELETE FROM customers_daily_deposits"),
-    db
-      .prepare(
-        `INSERT INTO customers_daily_deposits (date, phone, full_name, records, cards_deposited, balls_deposited, cards_withdrawn, balls_withdrawn, updated_at)
-        SELECT
-          d.deposit_date,
-          d.phone,
-          (SELECT d2.full_name FROM customers_deposits d2 WHERE d2.deposit_date = d.deposit_date AND d2.phone = d.phone AND d2.status != 'Đã hủy' ORDER BY d2.deposit_time DESC, d2.created_at DESC, d2.id DESC LIMIT 1),
-          COUNT(*),
-          COALESCE(SUM(CASE WHEN d.card_action = 'Gửi thẻ' THEN d.cards ELSE 0 END), 0),
-          COALESCE(SUM(CASE WHEN d.ball_action = 'Gửi bi' THEN d.balls ELSE 0 END), 0),
-          COALESCE(SUM(CASE WHEN d.card_action = 'Lấy thẻ' THEN d.cards ELSE 0 END), 0),
-          COALESCE(SUM(CASE WHEN d.ball_action = 'Lấy bi' THEN d.balls ELSE 0 END), 0),
-          ?
-        FROM customers_deposits d
-        WHERE d.status != 'Đã hủy'
-        GROUP BY d.deposit_date, d.phone`
-      )
-      .bind(nowIso),
-  ]);
+  ];
 
-  return phonesResult.results.length;
+  for (const [phone, rows] of rowsByPhone.entries()) {
+    const dates = new Set(rows.map((r) => r.deposit_date).filter(Boolean));
+    const plan = buildCustomerMutationPlan(db, phone, rows, { datesToSync: dates, nowIso });
+    statements.push(...plan.updateStatements, plan.summaryStatement, ...plan.dailyStatements);
+  }
+
+  await execBatchChunked(db, statements);
+  return rowsByPhone.size;
 }
 
 export interface CreateDepositResult {
@@ -487,30 +656,37 @@ export async function createDeposit(
   const depositTime = options.isAdmin && input.depositTime ? input.depositTime : hanoiNow.time;
   const idempotencyKey = options.idempotencyKey?.trim() || null;
 
+  const phoneRowsStmt = db
+    .prepare(
+      `SELECT * FROM customers_deposits
+      WHERE phone = ?
+      ORDER BY deposit_date ASC, deposit_time ASC, created_at ASC, system_created_ms ASC, id ASC`
+    )
+    .bind(input.phone);
+
+  let existingRows: DepositRow[];
   if (idempotencyKey) {
-    const existingByKey = await db
-      .prepare("SELECT * FROM customers_deposits WHERE idempotency_key = ? LIMIT 1")
-      .bind(idempotencyKey)
-      .first<DepositRow>();
+    const [phoneRes, idempRes] = await db.batch([
+      phoneRowsStmt,
+      db
+        .prepare("SELECT * FROM customers_deposits WHERE idempotency_key = ? LIMIT 1")
+        .bind(idempotencyKey),
+    ]);
+    const existingByKey = (idempRes.results[0] as DepositRow | undefined) ?? null;
     if (existingByKey) {
       const [serialized] = await serializeDeposits(db, [existingByKey], options.adminDisplayName, options.isAdmin);
       return { deposit: serialized, deduplicated: true };
     }
+    existingRows = phoneRes.results as DepositRow[];
+  } else {
+    const phoneRes = await phoneRowsStmt.all<DepositRow>();
+    existingRows = phoneRes.results;
   }
 
   const nowMs = now.getTime();
-  const recentRows = await db
-    .prepare(
-      `SELECT * FROM customers_deposits
-      WHERE phone = ? AND system_created_ms >= ?
-      ORDER BY system_created_ms DESC
-      LIMIT 5`
-    )
-    .bind(input.phone, nowMs - 15_000)
-    .all<DepositRow>();
-
-  const duplicate = recentRows.results.find(
+  const duplicate = existingRows.find(
     (row) =>
+      row.system_created_ms >= nowMs - 15_000 &&
       row.card_action === input.cardAction &&
       row.ball_action === input.ballAction &&
       row.cards === input.cards &&
@@ -527,19 +703,14 @@ export async function createDeposit(
   const ballsToTake = input.ballAction === "Lấy bi" ? input.balls : 0;
 
   if (cardsToTake > 0 || ballsToTake > 0) {
-    const activeTotals = await db
-      .prepare(
-        `SELECT
-          COALESCE(SUM(remaining_cards), 0) AS avail_cards,
-          COALESCE(SUM(remaining_balls), 0) AS avail_balls
-        FROM customers_deposits
-        WHERE phone = ? AND status = 'Đang gửi'`
-      )
-      .bind(input.phone)
-      .first<{ avail_cards: number; avail_balls: number }>();
-
-    const availCards = activeTotals?.avail_cards ?? 0;
-    const availBalls = activeTotals?.avail_balls ?? 0;
+    let availCards = 0;
+    let availBalls = 0;
+    for (const row of existingRows) {
+      if (row.status === "Đang gửi") {
+        availCards += row.remaining_cards;
+        availBalls += row.remaining_balls;
+      }
+    }
 
     if (cardsToTake > availCards) {
       throw new ServiceError(
@@ -559,9 +730,10 @@ export async function createDeposit(
   const historyId = generateId();
   const createdAt = buildRecordTimestamp(depositDate, depositTime, now);
   const nowIso = now.toISOString();
-  const remainingCards = input.cardAction === "Gửi thẻ" ? input.cards : 0;
-  const remainingBalls = input.ballAction === "Gửi bi" ? input.balls : 0;
-  const status: DepositStatus = remainingCards > 0 || remainingBalls > 0 ? "Đang gửi" : "Đã nhận lại";
+  const initialRemainingCards = input.cardAction === "Gửi thẻ" ? input.cards : 0;
+  const initialRemainingBalls = input.ballAction === "Gửi bi" ? input.balls : 0;
+  const initialStatus: DepositStatus =
+    initialRemainingCards > 0 || initialRemainingBalls > 0 ? "Đang gửi" : "Đã nhận lại";
   const searchName = normalizeSearchText(input.fullName);
 
   const actionSummaryParts: string[] = [];
@@ -569,46 +741,95 @@ export async function createDeposit(
   if (input.balls > 0) actionSummaryParts.push(`${input.ballAction} ${input.balls}`);
   const historyContent = `Tạo mới: ${actionSummaryParts.join(" + ")}`;
 
+  const newRow: DepositRow = {
+    id,
+    full_name: input.fullName,
+    search_name: searchName,
+    phone: input.phone,
+    deposit_date: depositDate,
+    deposit_time: depositTime,
+    card_action: input.cardAction,
+    ball_action: input.ballAction,
+    cards: input.cards,
+    balls: input.balls,
+    remaining_cards: initialRemainingCards,
+    remaining_balls: initialRemainingBalls,
+    total_text: formatTotalText(initialRemainingCards, initialRemainingBalls),
+    status: initialStatus,
+    created_by_name: input.actorName,
+    updated_by_name: input.actorName,
+    idempotency_key: idempotencyKey,
+    created_at: createdAt,
+    updated_at: nowIso,
+    system_created_ms: nowMs,
+  };
+
+  const plan = buildCustomerMutationPlan(db, input.phone, [...existingRows, newRow], {
+    skipUpdateIds: new Set([id]),
+    datesToSync: new Set([depositDate]),
+    nowIso,
+  });
+
+  const newComputed = plan.computedById.get(id)!;
+  newRow.remaining_cards = newComputed.remC;
+  newRow.remaining_balls = newComputed.remB;
+  newRow.status = newComputed.status;
+  newRow.total_text = newComputed.totalText;
+
+  const writeStatements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO customers_deposits (
+          id, full_name, search_name, phone, deposit_date, deposit_time,
+          card_action, ball_action, cards, balls, remaining_cards, remaining_balls,
+          total_text, status, created_by_name, updated_by_name, idempotency_key,
+          created_at, updated_at, system_created_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        newRow.id,
+        newRow.full_name,
+        newRow.search_name,
+        newRow.phone,
+        newRow.deposit_date,
+        newRow.deposit_time,
+        newRow.card_action,
+        newRow.ball_action,
+        newRow.cards,
+        newRow.balls,
+        newRow.remaining_cards,
+        newRow.remaining_balls,
+        newRow.total_text,
+        newRow.status,
+        newRow.created_by_name,
+        newRow.updated_by_name,
+        newRow.idempotency_key,
+        newRow.created_at,
+        newRow.updated_at,
+        newRow.system_created_ms
+      ),
+    db
+      .prepare(
+        `INSERT INTO deposit_history (id, deposit_id, seq, at, actor_name, action, content, before_json, after_json)
+        VALUES (?, ?, 0, ?, ?, 'CREATE', ?, NULL, NULL)`
+      )
+      .bind(historyId, id, createdAt, input.actorName, historyContent),
+  ];
+
+  for (const alloc of newComputed.allocations) {
+    writeStatements.push(
+      db
+        .prepare(
+          "INSERT INTO withdrawal_allocations (withdrawal_id, source_id, cards, balls) VALUES (?, ?, ?, ?)"
+        )
+        .bind(id, alloc.sourceId, alloc.cards, alloc.balls)
+    );
+  }
+
+  writeStatements.push(...plan.updateStatements, ...plan.dailyStatements, plan.summaryStatement);
+
   try {
-    await db.batch([
-      db
-        .prepare(
-          `INSERT INTO customers_deposits (
-            id, full_name, search_name, phone, deposit_date, deposit_time,
-            card_action, ball_action, cards, balls, remaining_cards, remaining_balls,
-            total_text, status, created_by_name, updated_by_name, idempotency_key,
-            created_at, updated_at, system_created_ms
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .bind(
-          id,
-          input.fullName,
-          searchName,
-          input.phone,
-          depositDate,
-          depositTime,
-          input.cardAction,
-          input.ballAction,
-          input.cards,
-          input.balls,
-          remainingCards,
-          remainingBalls,
-          formatTotalText(remainingCards, remainingBalls),
-          status,
-          input.actorName,
-          input.actorName,
-          idempotencyKey,
-          createdAt,
-          nowIso,
-          nowMs
-        ),
-      db
-        .prepare(
-          `INSERT INTO deposit_history (id, deposit_id, seq, at, actor_name, action, content, before_json, after_json)
-          VALUES (?, ?, 0, ?, ?, 'CREATE', ?, NULL, NULL)`
-        )
-        .bind(historyId, id, createdAt, input.actorName, historyContent),
-    ]);
+    await execBatchChunked(db, writeStatements);
   } catch (err) {
     if (idempotencyKey && err instanceof Error && /UNIQUE constraint/i.test(err.message)) {
       const raceRow = await db
@@ -623,15 +844,19 @@ export async function createDeposit(
     throw err;
   }
 
-  await recalculateCustomerDepositTotals(db, input.phone);
-  await rebuildDailyTotalsForKeys(db, [{ date: depositDate, phone: input.phone }]);
-
-  const freshRow = await getDepositRowById(db, id);
-  if (!freshRow) {
-    throw new ServiceError(500, "Không đọc lại được bản ghi vừa tạo.");
-  }
-
-  const [serialized] = await serializeDeposits(db, [freshRow], options.adminDisplayName, options.isAdmin);
+  const createHistoryItem: DepositHistoryItem = {
+    id: historyId,
+    at: createdAt,
+    actorName: input.actorName,
+    action: "CREATE",
+    content: historyContent,
+  };
+  const serialized = mapDepositDto(
+    newRow,
+    options.isAdmin ? [createHistoryItem] : [],
+    options.adminDisplayName,
+    options.isAdmin
+  );
 
   const actionTypes: string[] = [];
   if (input.cards > 0) actionTypes.push(`${input.cardAction} (${input.cards})`);
@@ -653,7 +878,9 @@ export async function createDeposit(
       actorName: input.actorName,
       depositTime,
       depositDate,
-      totalText: serialized.totalText,
+      totalCards: plan.totalCards,
+      totalBalls: plan.totalBalls,
+      totalText: formatTotalText(plan.totalCards, plan.totalBalls),
     },
   };
 }
@@ -671,7 +898,27 @@ export async function updateDeposit(
   deposit: DepositDTO;
   webhookPayload?: Record<string, unknown>;
 }> {
-  const existing = await getDepositRowById(db, id);
+  if (!isValidRecordId(id)) {
+    throw new ServiceError(404, "Không tìm thấy bản ghi.");
+  }
+
+  const includeHistory = options.includeHistory ?? true;
+
+  const [phoneRowsRes, seqRes] = await db.batch([
+    db
+      .prepare(
+        `SELECT * FROM customers_deposits
+        WHERE phone = (SELECT phone FROM customers_deposits WHERE id = ?)
+        ORDER BY deposit_date ASC, deposit_time ASC, created_at ASC, system_created_ms ASC, id ASC`
+      )
+      .bind(id),
+    db
+      .prepare("SELECT COALESCE(MAX(seq), -1) AS max_seq FROM deposit_history WHERE deposit_id = ?")
+      .bind(id),
+  ]);
+
+  const existingPhoneRows = phoneRowsRes.results as DepositRow[];
+  const existing = existingPhoneRows.find((row) => row.id === id);
   if (!existing) {
     throw new ServiceError(404, "Không tìm thấy bản ghi.");
   }
@@ -733,7 +980,7 @@ export async function updateDeposit(
       db,
       [existing],
       options.adminDisplayName,
-      options.includeHistory ?? true
+      includeHistory
     );
     return { deposit: unchanged };
   }
@@ -744,34 +991,90 @@ export async function updateDeposit(
       ? buildRecordTimestamp(nextDate, nextTime)
       : existing.created_at;
 
-  const seqRow = await db
-    .prepare("SELECT COALESCE(MAX(seq), -1) AS max_seq FROM deposit_history WHERE deposit_id = ?")
-    .bind(id)
-    .first<{ max_seq: number }>();
-  const nextSeq = (seqRow?.max_seq ?? -1) + 1;
+  const maxSeq = (seqRes.results[0] as { max_seq: number } | undefined)?.max_seq ?? -1;
+  const nextSeq = maxSeq + 1;
   const historyId = generateId();
   const content = changes.join(", ");
 
-  await db.batch([
+  const nextRow: DepositRow = {
+    ...existing,
+    full_name: nextFullName,
+    search_name: normalizeSearchText(nextFullName),
+    phone: nextPhone,
+    deposit_date: nextDate,
+    deposit_time: nextTime,
+    cards: nextCards,
+    balls: nextBalls,
+    status: nextStatus,
+    updated_by_name: input.actorName,
+    created_at: nextCreatedAt,
+    updated_at: nowIso,
+  };
+
+  let targetPlan: CustomerMutationPlan;
+  const extraStatements: D1PreparedStatement[] = [];
+
+  if (nextPhone === existing.phone) {
+    const nextRows = existingPhoneRows.map((r) => (r.id === id ? nextRow : r));
+    targetPlan = buildCustomerMutationPlan(db, nextPhone, nextRows, {
+      skipUpdateIds: new Set([id]),
+      datesToSync: new Set([existing.deposit_date, nextDate]),
+      nowIso,
+    });
+  } else {
+    const nextPhoneRes = await db
+      .prepare(
+        `SELECT * FROM customers_deposits
+        WHERE phone = ?
+        ORDER BY deposit_date ASC, deposit_time ASC, created_at ASC, system_created_ms ASC, id ASC`
+      )
+      .bind(nextPhone)
+      .all<DepositRow>();
+
+    const oldPlan = buildCustomerMutationPlan(
+      db,
+      existing.phone,
+      existingPhoneRows.filter((r) => r.id !== id),
+      { datesToSync: new Set([existing.deposit_date]), nowIso }
+    );
+    targetPlan = buildCustomerMutationPlan(db, nextPhone, [...nextPhoneRes.results, nextRow], {
+      skipUpdateIds: new Set([id]),
+      datesToSync: new Set([nextDate]),
+      nowIso,
+    });
+    extraStatements.push(...oldPlan.updateStatements, ...oldPlan.dailyStatements, oldPlan.summaryStatement);
+  }
+
+  const nextComputed = targetPlan.computedById.get(id)!;
+  nextRow.remaining_cards = nextComputed.remC;
+  nextRow.remaining_balls = nextComputed.remB;
+  nextRow.status = nextComputed.status;
+  nextRow.total_text = nextComputed.totalText;
+
+  const writeStatements: D1PreparedStatement[] = [
     db
       .prepare(
         `UPDATE customers_deposits
         SET full_name = ?, search_name = ?, phone = ?, deposit_date = ?, deposit_time = ?,
-            cards = ?, balls = ?, status = ?, updated_by_name = ?, created_at = ?, updated_at = ?
+            cards = ?, balls = ?, remaining_cards = ?, remaining_balls = ?, status = ?, total_text = ?,
+            updated_by_name = ?, created_at = ?, updated_at = ?
         WHERE id = ?`
       )
       .bind(
-        nextFullName,
-        normalizeSearchText(nextFullName),
-        nextPhone,
-        nextDate,
-        nextTime,
-        nextCards,
-        nextBalls,
-        nextStatus,
-        input.actorName,
-        nextCreatedAt,
-        nowIso,
+        nextRow.full_name,
+        nextRow.search_name,
+        nextRow.phone,
+        nextRow.deposit_date,
+        nextRow.deposit_time,
+        nextRow.cards,
+        nextRow.balls,
+        nextRow.remaining_cards,
+        nextRow.remaining_balls,
+        nextRow.status,
+        nextRow.total_text,
+        nextRow.updated_by_name,
+        nextRow.created_at,
+        nextRow.updated_at,
         id
       ),
     db
@@ -789,27 +1092,58 @@ export async function updateDeposit(
         JSON.stringify(beforeSnapshot),
         JSON.stringify(afterSnapshot)
       ),
-  ]);
+  ];
 
-  await recalculateCustomerDepositTotals(db, existing.phone);
-  if (nextPhone !== existing.phone) {
-    await recalculateCustomerDepositTotals(db, nextPhone);
+  if (nextRow.card_action === "Lấy thẻ" || nextRow.ball_action === "Lấy bi") {
+    writeStatements.push(
+      db.prepare("DELETE FROM withdrawal_allocations WHERE withdrawal_id = ?").bind(id)
+    );
+    for (const alloc of nextComputed.allocations) {
+      writeStatements.push(
+        db
+          .prepare(
+            "INSERT INTO withdrawal_allocations (withdrawal_id, source_id, cards, balls) VALUES (?, ?, ?, ?)"
+          )
+          .bind(id, alloc.sourceId, alloc.cards, alloc.balls)
+      );
+    }
   }
-  await rebuildDailyTotalsForKeys(db, [
-    { date: existing.deposit_date, phone: existing.phone },
-    { date: nextDate, phone: nextPhone },
-  ]);
 
-  const updated = await getDepositRowById(db, id);
-  if (!updated) {
-    throw new ServiceError(500, "Không đọc được bản ghi sau cập nhật.");
+  writeStatements.push(
+    ...targetPlan.updateStatements,
+    ...targetPlan.dailyStatements,
+    targetPlan.summaryStatement,
+    ...extraStatements
+  );
+
+  const historySelectStmt = includeHistory
+    ? db
+        .prepare(
+          "SELECT id, deposit_id, seq, at, actor_name, action, content, before_json, after_json FROM deposit_history WHERE deposit_id = ? ORDER BY seq ASC"
+        )
+        .bind(id)
+    : db
+        .prepare(
+          "SELECT id, deposit_id, seq, at, actor_name, action, content, NULL AS before_json, NULL AS after_json FROM deposit_history WHERE deposit_id = ? AND +action = 'UPDATE' ORDER BY seq ASC"
+        )
+        .bind(id);
+
+  let historyRows: HistoryRow[] = [];
+  if (writeStatements.length + 1 <= 100) {
+    const batchResults = await db.batch([...writeStatements, historySelectStmt]);
+    historyRows = batchResults[batchResults.length - 1].results as HistoryRow[];
+  } else {
+    await execBatchChunked(db, writeStatements);
+    const histRes = await historySelectStmt.all<HistoryRow>();
+    historyRows = histRes.results;
   }
 
   const [serialized] = await serializeDeposits(
     db,
-    [updated],
+    [nextRow],
     options.adminDisplayName,
-    options.includeHistory ?? true
+    includeHistory,
+    historyRows
   );
 
   return {
@@ -818,15 +1152,17 @@ export async function updateDeposit(
       event: "UPDATE",
       id,
       historyId,
-      title: `${updated.full_name} (${updated.phone})`,
-      type: `Cập nhật (Bởi ${input.actorName} lúc ${updated.deposit_time})`,
-      fullName: updated.full_name,
-      phone: updated.phone,
+      title: `${nextRow.full_name} (${nextRow.phone})`,
+      type: `Cập nhật (Bởi ${input.actorName} lúc ${nextRow.deposit_time})`,
+      fullName: nextRow.full_name,
+      phone: nextRow.phone,
       actorName: input.actorName,
-      depositTime: updated.deposit_time,
-      depositDate: updated.deposit_date,
+      depositTime: nextRow.deposit_time,
+      depositDate: nextRow.deposit_date,
       content,
-      totalText: updated.total_text,
+      totalCards: targetPlan.totalCards,
+      totalBalls: targetPlan.totalBalls,
+      totalText: formatTotalText(targetPlan.totalCards, targetPlan.totalBalls),
     },
   };
 }
@@ -840,34 +1176,58 @@ export async function deleteDepositRecord(
   restoredCards: number;
   restoredBalls: number;
 }> {
-  const existing = await getDepositRowById(db, id);
+  if (!isValidRecordId(id)) {
+    throw new ServiceError(404, "Không tìm thấy bản ghi.");
+  }
+
+  const phoneRowsRes = await db
+    .prepare(
+      `SELECT * FROM customers_deposits
+      WHERE phone = (SELECT phone FROM customers_deposits WHERE id = ?)
+      ORDER BY deposit_date ASC, deposit_time ASC, created_at ASC, system_created_ms ASC, id ASC`
+    )
+    .bind(id)
+    .all<DepositRow>();
+
+  const rows = phoneRowsRes.results;
+  const existing = rows.find((r) => r.id === id);
   if (!existing) {
     throw new ServiceError(404, "Không tìm thấy bản ghi.");
   }
 
-  const allocSummary = await db
-    .prepare(
-      `SELECT COALESCE(SUM(cards), 0) AS restored_cards, COALESCE(SUM(balls), 0) AS restored_balls
-      FROM withdrawal_allocations
-      WHERE withdrawal_id = ?`
-    )
-    .bind(id)
-    .first<{ restored_cards: number; restored_balls: number }>();
+  let beforeTotalCards = 0;
+  let beforeTotalBalls = 0;
+  for (const r of rows) {
+    if (r.status === "Đang gửi") {
+      beforeTotalCards += r.remaining_cards;
+      beforeTotalBalls += r.remaining_balls;
+    }
+  }
 
-  await db.batch([
+  const remainingRows = rows.filter((r) => r.id !== id);
+  const plan = buildCustomerMutationPlan(db, existing.phone, remainingRows, {
+    datesToSync: new Set([existing.deposit_date]),
+  });
+
+  const restoredCards = Math.max(0, plan.totalCards - beforeTotalCards);
+  const restoredBalls = Math.max(0, plan.totalBalls - beforeTotalBalls);
+
+  const statements: D1PreparedStatement[] = [
     db.prepare("DELETE FROM withdrawal_allocations WHERE withdrawal_id = ?").bind(id),
     db.prepare("DELETE FROM deposit_history WHERE deposit_id = ?").bind(id),
     db.prepare("DELETE FROM customers_deposits WHERE id = ?").bind(id),
-  ]);
+    ...plan.updateStatements,
+    ...plan.dailyStatements,
+    plan.summaryStatement,
+  ];
 
-  await recalculateCustomerDepositTotals(db, existing.phone);
-  await rebuildDailyTotalsForKeys(db, [{ date: existing.deposit_date, phone: existing.phone }]);
+  await execBatchChunked(db, statements);
 
   return {
     id,
     fullName: existing.full_name,
-    restoredCards: allocSummary?.restored_cards ?? 0,
-    restoredBalls: allocSummary?.restored_balls ?? 0,
+    restoredCards,
+    restoredBalls,
   };
 }
 
@@ -882,16 +1242,30 @@ export async function undoHistoryEntry(
   actorName: string;
   content: string;
 }> {
-  const existing = await getDepositRowById(db, depositId);
+  if (!isValidRecordId(depositId)) {
+    throw new ServiceError(404, "Không tìm thấy bản ghi.");
+  }
+
+  const [phoneRowsRes, historyRes] = await db.batch([
+    db
+      .prepare(
+        `SELECT * FROM customers_deposits
+        WHERE phone = (SELECT phone FROM customers_deposits WHERE id = ?)
+        ORDER BY deposit_date ASC, deposit_time ASC, created_at ASC, system_created_ms ASC, id ASC`
+      )
+      .bind(depositId),
+    db
+      .prepare("SELECT * FROM deposit_history WHERE id = ? AND deposit_id = ? LIMIT 1")
+      .bind(historyId, depositId),
+  ]);
+
+  const existingPhoneRows = phoneRowsRes.results as DepositRow[];
+  const existing = existingPhoneRows.find((r) => r.id === depositId);
   if (!existing) {
     throw new ServiceError(404, "Không tìm thấy bản ghi.");
   }
 
-  const historyRow = await db
-    .prepare("SELECT * FROM deposit_history WHERE id = ? AND deposit_id = ? LIMIT 1")
-    .bind(historyId, depositId)
-    .first<HistoryRow>();
-
+  const historyRow = (historyRes.results[0] as HistoryRow | undefined) ?? null;
   if (!historyRow) {
     throw new ServiceError(404, "Không tìm thấy mục lịch sử cần hoàn tác.");
   }
@@ -913,39 +1287,110 @@ export async function undoHistoryEntry(
   const nextTime = before.depositTime ?? existing.deposit_time;
   const nowIso = new Date().toISOString();
 
-  await db.batch([
+  const nextRow: DepositRow = {
+    ...existing,
+    full_name: nextFullName,
+    search_name: normalizeSearchText(nextFullName),
+    phone: nextPhone,
+    deposit_date: nextDate,
+    deposit_time: nextTime,
+    cards: nextCards,
+    balls: nextBalls,
+    status: nextStatus,
+    updated_at: nowIso,
+  };
+
+  let targetPlan: CustomerMutationPlan;
+  const extraStatements: D1PreparedStatement[] = [];
+
+  if (nextPhone === existing.phone) {
+    const nextRows = existingPhoneRows.map((r) => (r.id === depositId ? nextRow : r));
+    targetPlan = buildCustomerMutationPlan(db, nextPhone, nextRows, {
+      skipUpdateIds: new Set([depositId]),
+      datesToSync: new Set([existing.deposit_date, nextDate]),
+      nowIso,
+    });
+  } else {
+    const nextPhoneRes = await db
+      .prepare(
+        `SELECT * FROM customers_deposits
+        WHERE phone = ?
+        ORDER BY deposit_date ASC, deposit_time ASC, created_at ASC, system_created_ms ASC, id ASC`
+      )
+      .bind(nextPhone)
+      .all<DepositRow>();
+
+    const oldPlan = buildCustomerMutationPlan(
+      db,
+      existing.phone,
+      existingPhoneRows.filter((r) => r.id !== depositId),
+      { datesToSync: new Set([existing.deposit_date]), nowIso }
+    );
+    targetPlan = buildCustomerMutationPlan(db, nextPhone, [...nextPhoneRes.results, nextRow], {
+      skipUpdateIds: new Set([depositId]),
+      datesToSync: new Set([nextDate]),
+      nowIso,
+    });
+    extraStatements.push(...oldPlan.updateStatements, ...oldPlan.dailyStatements, oldPlan.summaryStatement);
+  }
+
+  const nextComputed = targetPlan.computedById.get(depositId)!;
+  nextRow.remaining_cards = nextComputed.remC;
+  nextRow.remaining_balls = nextComputed.remB;
+  nextRow.status = nextComputed.status;
+  nextRow.total_text = nextComputed.totalText;
+
+  const statements: D1PreparedStatement[] = [
     db
       .prepare(
         `UPDATE customers_deposits
         SET full_name = ?, search_name = ?, phone = ?, deposit_date = ?, deposit_time = ?,
-            cards = ?, balls = ?, status = ?, updated_at = ?
+            cards = ?, balls = ?, remaining_cards = ?, remaining_balls = ?, status = ?, total_text = ?, updated_at = ?
         WHERE id = ?`
       )
       .bind(
-        nextFullName,
-        normalizeSearchText(nextFullName),
-        nextPhone,
-        nextDate,
-        nextTime,
-        nextCards,
-        nextBalls,
-        nextStatus,
+        nextRow.full_name,
+        nextRow.search_name,
+        nextRow.phone,
+        nextRow.deposit_date,
+        nextRow.deposit_time,
+        nextRow.cards,
+        nextRow.balls,
+        nextRow.remaining_cards,
+        nextRow.remaining_balls,
+        nextRow.status,
+        nextRow.total_text,
         nowIso,
         depositId
       ),
     db
       .prepare("DELETE FROM deposit_history WHERE id = ? AND deposit_id = ?")
       .bind(historyId, depositId),
-  ]);
+  ];
 
-  await recalculateCustomerDepositTotals(db, existing.phone);
-  if (nextPhone !== existing.phone) {
-    await recalculateCustomerDepositTotals(db, nextPhone);
+  if (nextRow.card_action === "Lấy thẻ" || nextRow.ball_action === "Lấy bi") {
+    statements.push(
+      db.prepare("DELETE FROM withdrawal_allocations WHERE withdrawal_id = ?").bind(depositId)
+    );
+    for (const alloc of nextComputed.allocations) {
+      statements.push(
+        db
+          .prepare(
+            "INSERT INTO withdrawal_allocations (withdrawal_id, source_id, cards, balls) VALUES (?, ?, ?, ?)"
+          )
+          .bind(depositId, alloc.sourceId, alloc.cards, alloc.balls)
+      );
+    }
   }
-  await rebuildDailyTotalsForKeys(db, [
-    { date: existing.deposit_date, phone: existing.phone },
-    { date: nextDate, phone: nextPhone },
-  ]);
+
+  statements.push(
+    ...targetPlan.updateStatements,
+    ...targetPlan.dailyStatements,
+    targetPlan.summaryStatement,
+    ...extraStatements
+  );
+
+  await execBatchChunked(db, statements);
 
   return {
     id: depositId,

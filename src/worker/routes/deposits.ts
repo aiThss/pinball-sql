@@ -14,6 +14,7 @@ import {
   createDeposit,
   deleteDepositRecord,
   type DepositRow,
+  type HistoryRow,
   recalculateAllCustomers,
   serializeDeposits,
   ServiceError,
@@ -49,25 +50,46 @@ depositsRoutes.get("/lookup", async (c) => {
       totalBalls: 0,
     };
 
-    if (cleaned.length >= 8) {
-      const stats = await c.env.DB.prepare(
-        `SELECT
-          COUNT(CASE WHEN status = 'Đang gửi' THEN 1 END) AS active_deposits,
-          COALESCE(SUM(CASE WHEN status = 'Đang gửi' THEN remaining_cards ELSE 0 END), 0) AS total_cards,
-          COALESCE(SUM(CASE WHEN status = 'Đang gửi' THEN remaining_balls ELSE 0 END), 0) AS total_balls,
-          (SELECT d2.full_name FROM customers_deposits d2 WHERE d2.phone = ? AND d2.status != 'Đã hủy' ORDER BY d2.deposit_date DESC, d2.deposit_time DESC, d2.created_at DESC, d2.id DESC LIMIT 1) AS full_name
-        FROM customers_deposits
-        WHERE phone = ? AND status != 'Đã hủy'`
-      )
-        .bind(cleaned, cleaned)
-        .first<{
-          active_deposits: number;
-          total_cards: number;
-          total_balls: number;
-          full_name: string | null;
-        }>();
+    const exactStmt =
+      cleaned.length >= 8
+        ? c.env.DB.prepare(
+            `SELECT phone, full_name, active_deposits, total_cards, total_balls
+            FROM customers_summary
+            WHERE phone = ?
+            LIMIT 1`
+          ).bind(cleaned)
+        : null;
 
-      if (stats && (stats.full_name || stats.active_deposits > 0)) {
+    const suggestionsStmt =
+      searchPattern.length >= 2
+        ? c.env.DB.prepare(
+            `SELECT
+              phone,
+              full_name AS fullName,
+              active_deposits AS activeDeposits,
+              total_cards AS totalCards,
+              total_balls AS totalBalls,
+              latest_status AS latestStatus,
+              latest_deposit_date AS latestDepositDate
+            FROM customers_summary
+            WHERE phone LIKE ?
+            ORDER BY active_deposits DESC, latest_deposit_date DESC
+            LIMIT 8`
+          ).bind(`%${searchPattern}%`)
+        : null;
+
+    if (exactStmt && suggestionsStmt) {
+      const [exactRes, suggestionsRes] = await c.env.DB.batch([exactStmt, suggestionsStmt]);
+      const stats = exactRes.results[0] as
+        | {
+            phone: string;
+            full_name: string;
+            active_deposits: number;
+            total_cards: number;
+            total_balls: number;
+          }
+        | undefined;
+      if (stats) {
         exact = {
           found: stats.active_deposits > 0,
           phone: cleaned,
@@ -77,34 +99,42 @@ depositsRoutes.get("/lookup", async (c) => {
           totalBalls: stats.total_balls,
         };
       }
+      return c.json({
+        ...exact,
+        suggestions: suggestionsRes.results,
+      });
     }
 
-    if (searchPattern.length < 2) {
+    if (exactStmt) {
+      const stats = await exactStmt.first<{
+        phone: string;
+        full_name: string;
+        active_deposits: number;
+        total_cards: number;
+        total_balls: number;
+      }>();
+      if (stats) {
+        exact = {
+          found: stats.active_deposits > 0,
+          phone: cleaned,
+          fullName: stats.full_name || "",
+          activeDeposits: stats.active_deposits,
+          totalCards: stats.total_cards,
+          totalBalls: stats.total_balls,
+        };
+      }
       return c.json({ ...exact, suggestions: [] });
     }
 
-    const suggestionsResult = await c.env.DB.prepare(
-      `SELECT
-        d.phone,
-        (SELECT d2.full_name FROM customers_deposits d2 WHERE d2.phone = d.phone AND d2.status != 'Đã hủy' ORDER BY d2.deposit_date DESC, d2.deposit_time DESC, d2.created_at DESC, d2.id DESC LIMIT 1) AS fullName,
-        COUNT(CASE WHEN d.status = 'Đang gửi' THEN 1 END) AS activeDeposits,
-        COALESCE(SUM(CASE WHEN d.status = 'Đang gửi' THEN d.remaining_cards ELSE 0 END), 0) AS totalCards,
-        COALESCE(SUM(CASE WHEN d.status = 'Đang gửi' THEN d.remaining_balls ELSE 0 END), 0) AS totalBalls,
-        (SELECT d3.status FROM customers_deposits d3 WHERE d3.phone = d.phone ORDER BY d3.deposit_date DESC, d3.deposit_time DESC, d3.created_at DESC, d3.id DESC LIMIT 1) AS latestStatus,
-        MAX(d.deposit_date) AS latestDepositDate
-      FROM customers_deposits d
-      WHERE d.phone LIKE ? AND d.status != 'Đã hủy'
-      GROUP BY d.phone
-      ORDER BY activeDeposits DESC, latestDepositDate DESC
-      LIMIT 8`
-    )
-      .bind(`%${searchPattern}%`)
-      .all();
+    if (suggestionsStmt) {
+      const suggestionsRes = await suggestionsStmt.all();
+      return c.json({
+        ...exact,
+        suggestions: suggestionsRes.results,
+      });
+    }
 
-    return c.json({
-      ...exact,
-      suggestions: suggestionsResult.results,
-    });
+    return c.json({ ...exact, suggestions: [] });
   }
 
   if (textQuery) {
@@ -114,11 +144,11 @@ depositsRoutes.get("/lookup", async (c) => {
     const params: string[] = [];
 
     if (qDigits.length >= 3) {
-      conditions.push("d.phone LIKE ?");
+      conditions.push("phone LIKE ?");
       params.push(`%${qDigits}%`);
     }
     if (qName.length >= 2) {
-      conditions.push("d.search_name LIKE ?");
+      conditions.push("search_name LIKE ?");
       params.push(`%${qName}%`);
     }
 
@@ -134,20 +164,19 @@ depositsRoutes.get("/lookup", async (c) => {
       });
     }
 
-    const whereClause = `(${conditions.join(" OR ")}) AND d.status != 'Đã hủy'`;
+    const whereClause = conditions.join(" OR ");
     const rows = await c.env.DB.prepare(
       `SELECT
-        d.phone,
-        (SELECT d2.full_name FROM customers_deposits d2 WHERE d2.phone = d.phone AND d2.status != 'Đã hủy' ORDER BY d2.deposit_date DESC, d2.deposit_time DESC, d2.created_at DESC, d2.id DESC LIMIT 1) AS fullName,
-        COUNT(CASE WHEN d.status = 'Đang gửi' THEN 1 END) AS activeDeposits,
-        COALESCE(SUM(CASE WHEN d.status = 'Đang gửi' THEN d.remaining_cards ELSE 0 END), 0) AS totalCards,
-        COALESCE(SUM(CASE WHEN d.status = 'Đang gửi' THEN d.remaining_balls ELSE 0 END), 0) AS totalBalls,
-        (SELECT d3.status FROM customers_deposits d3 WHERE d3.phone = d.phone ORDER BY d3.deposit_date DESC, d3.deposit_time DESC, d3.created_at DESC, d3.id DESC LIMIT 1) AS latestStatus,
-        MAX(d.deposit_date) AS latestDepositDate
-      FROM customers_deposits d
+        phone,
+        full_name AS fullName,
+        active_deposits AS activeDeposits,
+        total_cards AS totalCards,
+        total_balls AS totalBalls,
+        latest_status AS latestStatus,
+        latest_deposit_date AS latestDepositDate
+      FROM customers_summary
       WHERE ${whereClause}
-      GROUP BY d.phone
-      ORDER BY activeDeposits DESC, latestDepositDate DESC
+      ORDER BY active_deposits DESC, latest_deposit_date DESC
       LIMIT 10`
     )
       .bind(...params)
@@ -178,53 +207,75 @@ depositsRoutes.get("/lookup", async (c) => {
 depositsRoutes.get("/summary", async (c) => {
   const today = getHanoiNow().date;
 
-  const [totalsRow, todayRow, historyRow, customersResult] = await Promise.all([
+  const [customersRes, todayRes, historyRes] = await c.env.DB.batch([
     c.env.DB.prepare(
       `SELECT
-        COUNT(*) AS activeDeposits,
-        COALESCE(SUM(remaining_cards), 0) AS totalCards,
-        COALESCE(SUM(remaining_balls), 0) AS totalBalls
-      FROM customers_deposits
-      WHERE status = 'Đang gửi'`
-    ).first<{ activeDeposits: number; totalCards: number; totalBalls: number }>(),
+        phone,
+        full_name AS fullName,
+        active_deposits AS activeDeposits,
+        total_cards AS totalCards,
+        total_balls AS totalBalls
+      FROM customers_summary
+      WHERE active_deposits > 0
+      ORDER BY total_cards DESC, total_balls DESC`
+    ),
     c.env.DB.prepare(
       `SELECT COUNT(*) AS cnt FROM customers_deposits WHERE deposit_date = ? AND status != 'Đã hủy'`
-    )
-      .bind(today)
-      .first<{ cnt: number }>(),
-    c.env.DB.prepare(`SELECT COUNT(*) AS cnt FROM deposit_history`).first<{ cnt: number }>(),
-    c.env.DB.prepare(
-      `SELECT
-        d.phone,
-        (SELECT d2.full_name FROM customers_deposits d2 WHERE d2.phone = d.phone AND d2.status = 'Đang gửi' ORDER BY d2.deposit_date DESC, d2.deposit_time DESC, d2.created_at DESC, d2.id DESC LIMIT 1) AS fullName,
-        COALESCE(SUM(d.remaining_cards), 0) AS totalCards,
-        COALESCE(SUM(d.remaining_balls), 0) AS totalBalls
-      FROM customers_deposits d
-      WHERE d.status = 'Đang gửi' AND (d.remaining_cards > 0 OR d.remaining_balls > 0)
-      GROUP BY d.phone
-      ORDER BY totalCards DESC, totalBalls DESC`
-    ).all<{ phone: string; fullName: string; totalCards: number; totalBalls: number }>(),
+    ).bind(today),
+    c.env.DB.prepare(`SELECT COUNT(*) AS cnt FROM deposit_history`),
   ]);
 
-  const activeCustomers = customersResult.results.map((row) => ({
-    fullName: row.fullName,
-    phone: row.phone,
-    totalCards: row.totalCards,
-    totalBalls: row.totalBalls,
-  }));
+  const summaryRows = customersRes.results as Array<{
+    phone: string;
+    fullName: string;
+    activeDeposits: number;
+    totalCards: number;
+    totalBalls: number;
+  }>;
 
-  const cardRankings = activeCustomers
-    .filter((row) => row.totalCards > 0)
-    .map((row) => ({
-      fullName: row.fullName,
-      phone: row.phone,
-      totalCards: row.totalCards,
-    }));
+  let activeDeposits = 0;
+  let totalCards = 0;
+  let totalBalls = 0;
+  const activeCustomers: Array<{
+    fullName: string;
+    phone: string;
+    totalCards: number;
+    totalBalls: number;
+  }> = [];
+  const cardRankings: Array<{
+    fullName: string;
+    phone: string;
+    totalCards: number;
+  }> = [];
+
+  for (const row of summaryRows) {
+    activeDeposits += row.activeDeposits;
+    totalCards += row.totalCards;
+    totalBalls += row.totalBalls;
+    if (row.totalCards > 0 || row.totalBalls > 0) {
+      activeCustomers.push({
+        fullName: row.fullName,
+        phone: row.phone,
+        totalCards: row.totalCards,
+        totalBalls: row.totalBalls,
+      });
+      if (row.totalCards > 0) {
+        cardRankings.push({
+          fullName: row.fullName,
+          phone: row.phone,
+          totalCards: row.totalCards,
+        });
+      }
+    }
+  }
+
+  const todayRow = todayRes.results[0] as { cnt: number } | undefined;
+  const historyRow = historyRes.results[0] as { cnt: number } | undefined;
 
   return c.json({
-    activeDeposits: totalsRow?.activeDeposits ?? 0,
-    totalCards: totalsRow?.totalCards ?? 0,
-    totalBalls: totalsRow?.totalBalls ?? 0,
+    activeDeposits,
+    totalCards,
+    totalBalls,
     todayDeposits: todayRow?.cnt ?? 0,
     historyEntries: historyRow?.cnt ?? 0,
     cardRankings,
@@ -272,26 +323,44 @@ depositsRoutes.get("/", async (c) => {
   }
 
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+  const historySql = includeHistory
+    ? `SELECT id, deposit_id, seq, at, actor_name, action, content, before_json, after_json
+       FROM deposit_history
+       WHERE deposit_id IN (
+         SELECT id FROM customers_deposits ${whereSql}
+         ORDER BY deposit_date DESC, deposit_time DESC, created_at DESC, system_created_ms DESC, id DESC
+         LIMIT ? OFFSET ?
+       )
+       ORDER BY deposit_id ASC, seq ASC`
+    : `SELECT id, deposit_id, seq, at, actor_name, action, content, NULL AS before_json, NULL AS after_json
+       FROM deposit_history
+       WHERE deposit_id IN (
+         SELECT id FROM customers_deposits ${whereSql}
+         ORDER BY deposit_date DESC, deposit_time DESC, created_at DESC, system_created_ms DESC, id DESC
+         LIMIT ? OFFSET ?
+       ) AND +action = 'UPDATE'
+       ORDER BY deposit_id ASC, seq ASC`;
 
-  const [countRow, rowsResult] = await Promise.all([
-    c.env.DB.prepare(`SELECT COUNT(*) AS total FROM customers_deposits ${whereSql}`)
-      .bind(...bindings)
-      .first<{ total: number }>(),
+  const [countRes, rowsRes, historyRes] = await c.env.DB.batch([
+    c.env.DB.prepare(`SELECT COUNT(*) AS total FROM customers_deposits ${whereSql}`).bind(...bindings),
     c.env.DB.prepare(
       `SELECT * FROM customers_deposits ${whereSql}
       ORDER BY deposit_date DESC, deposit_time DESC, created_at DESC, system_created_ms DESC, id DESC
       LIMIT ? OFFSET ?`
-    )
-      .bind(...bindings, limit, offset)
-      .all<DepositRow>(),
+    ).bind(...bindings, limit, offset),
+    c.env.DB.prepare(historySql).bind(...bindings, limit, offset),
   ]);
 
+  const countRow = countRes.results[0] as { total: number } | undefined;
   const total = countRow?.total ?? 0;
+  const rows = rowsRes.results as DepositRow[];
+  const historyRows = historyRes.results as HistoryRow[];
   const deposits = await serializeDeposits(
     c.env.DB,
-    rowsResult.results,
+    rows,
     adminDisplayName,
-    includeHistory
+    includeHistory,
+    historyRows
   );
 
   return c.json({

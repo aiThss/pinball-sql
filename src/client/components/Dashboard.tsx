@@ -226,7 +226,7 @@ const emptyAdminSystemOverview: AdminSystemOverview = {
 const depositPageLimit = 50;
 const exportPageLimit = 100;
 const minPhoneSuggestionDigits = 3;
-const customerSearchDebounceMs = 50;
+const customerSearchDebounceMs = 120;
 
 function getDefaultDepositForm(includeDateTime = false) {
   const now = getHanoiNow();
@@ -612,6 +612,8 @@ export default function Dashboard({
   const [lookupLoading, setLookupLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const isUpdatingRef = useRef(false);
 
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyQueryResults, setHistoryQueryResults] = useState<DepositSuggestion[]>([]);
@@ -1007,13 +1009,13 @@ export default function Dashboard({
     }
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && !isSubmittingRef.current && !isUpdatingRef.current) {
         void refreshData({ silent: true });
       }
     };
 
     const intervalId = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && !isSubmittingRef.current && !isUpdatingRef.current) {
         void refreshData({ silent: true });
       }
     }, 8000);
@@ -1377,9 +1379,12 @@ export default function Dashboard({
   async function handleUpdateDeposit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!editingDeposit) {
+    if (!editingDeposit || isUpdatingRef.current) {
       return;
     }
+
+    isUpdatingRef.current = true;
+    setIsUpdating(true);
 
     const payload = isAdmin
       ? {
@@ -1425,6 +1430,9 @@ export default function Dashboard({
       showNotice("success", "Đã cập nhật bản ghi.");
     } catch (error) {
       showNotice("error", error instanceof Error ? error.message : "Không cập nhật được.");
+    } finally {
+      isUpdatingRef.current = false;
+      setIsUpdating(false);
     }
   }
 
@@ -3206,14 +3214,19 @@ export default function Dashboard({
               <div className="grid grid-cols-2 gap-2 sm:col-span-2 sm:flex sm:justify-end">
                 <button
                   className={`${secondaryButton} w-full sm:w-auto`}
+                  disabled={isUpdating}
                   onClick={() => setEditingDeposit(null)}
                   type="button"
                 >
                   Hủy
                 </button>
-                <button className={`${primaryButton} w-full sm:w-auto`} type="submit">
-                  <Save aria-hidden="true" size={18} />
-                  Lưu cập nhật
+                <button className={`${primaryButton} w-full sm:w-auto`} disabled={isUpdating} type="submit">
+                  {isUpdating ? (
+                    <LoaderCircle className="animate-spin" aria-hidden="true" size={18} />
+                  ) : (
+                    <Save aria-hidden="true" size={18} />
+                  )}
+                  {isUpdating ? "Đang lưu..." : "Lưu cập nhật"}
                 </button>
               </div>
             </form>
